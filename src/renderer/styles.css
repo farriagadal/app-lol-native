@@ -1,0 +1,1356 @@
+/* ============================================================
+   League Coach · Overlay — sistema visual de Claude Design
+   Adaptado al overlay real de Electron (fondo transparente).
+   Las variables de paleta se inyectan en runtime sobre :root;
+   aquí va la paleta "Hextech" como valor por defecto del primer
+   pintado y los colores de fase (globales, no por paleta).
+   ============================================================ */
+:root {
+  /* indicador de fase (global, no por paleta) */
+  --phase-disconnected: #e8473c;
+  --phase-idle: #e8c24a;
+  --phase-champ: #4c8dff;
+  --phase-ingame: #46d17f;
+
+  /* paleta por defecto: Hextech */
+  --accent: #c8aa6e;
+  --accent2: #0ac8b9;
+  --text: #f0e6d2;
+  --muted: #9aa7b4;
+  --fav: #4fd787;
+  --even: #e8c95a;
+  --bad: #ea5a50;
+  /* colores sólidos base del panel; el alfa lo aporta --ui-opacity */
+  --panel-solid: #091221;
+  --panel-2-solid: #142136;
+  --border: rgba(200, 170, 110, 0.22);
+
+  /* controles de overlay (ajustes) */
+  --ui-opacity: 0.97;
+  --ui-scale: 1;
+
+  /* El relleno del panel = color sólido mezclado con transparente según la
+     opacidad elegida. Al 100% queda totalmente opaco (nada transparente);
+     al bajarlo se vuelve glassy y deja ver el juego. */
+  --panel: color-mix(in srgb, var(--panel-solid) calc(var(--ui-opacity) * 100%), transparent);
+  --panel-2: color-mix(in srgb, var(--panel-2-solid) calc(var(--ui-opacity) * 100%), transparent);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html,
+body {
+  height: 100%;
+  width: 100%;
+}
+body {
+  font-family: "Saira", system-ui, sans-serif;
+  /* Transparente: el juego se ve a través del overlay. */
+  background: transparent;
+  color: var(--text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  /* Click-through por defecto; sólo las zonas .interactive capturan ratón. */
+  pointer-events: none;
+  user-select: none;
+}
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+.tabnum {
+  font-family: "JetBrains Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+.hidden {
+  display: none !important;
+}
+
+/* las zonas interactivas capturan el ratón cuando el overlay deja de ser click-through */
+.panel,
+.shortcuts {
+  pointer-events: auto;
+}
+
+/* ============ CHROME COMPARTIDO DE PANELES ============ */
+/* La opacidad ya no se aplica al elemento: --ui-opacity controla el alfa del
+   relleno (--panel/--panel-2) para que el texto siga nítido y el 100% quede
+   totalmente opaco. */
+.overlay-region {
+  position: fixed;
+}
+.panel,
+.shortcuts {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 12px 36px -10px rgba(0, 0, 0, 0.7),
+    0 2px 0 0 rgba(255, 255, 255, 0.04) inset;
+  color: var(--text);
+}
+
+/* ---- arrastre de ventanas ---- */
+/* La cabecera (barra) y las zonas "vacías" invitan a arrastrar; los controles
+   conservan su cursor (button => pointer). Durante el arrastre, todo agarra. */
+.ctrl-bar,
+.shortcuts,
+.panel .you-head,
+.panel .wait-glyph {
+  cursor: grab;
+}
+body.dragging,
+body.dragging * {
+  cursor: grabbing !important;
+}
+
+/* ---- cabecera de la ventana (barra de control) ---- */
+.ctrl-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 13px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 13px 13px 0 0;
+}
+.panel.pinned {
+  border-color: color-mix(in oklab, var(--accent) 70%, transparent);
+}
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 18%, transparent),
+    0 0 10px 0 currentColor;
+}
+.phase-text {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctrl-ping {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  margin-left: 2px;
+}
+.ctrl-ping .pdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fav);
+}
+.ctrl-spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.ctrl-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 1px;
+}
+.ctrl-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 15px;
+  transition: 0.14s;
+  border: 1px solid transparent;
+}
+.ctrl-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.ctrl-btn.active {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.ctrl-btn.danger:hover {
+  color: #fff;
+  background: color-mix(in oklab, var(--phase-disconnected) 78%, transparent);
+}
+
+/* ---- ventana principal (sup. derecha) ---- */
+.main-region {
+  top: 18px;
+  right: 18px;
+  transform-origin: top right;
+  transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) scale(var(--ui-scale));
+}
+.panel {
+  width: 360px;
+  max-height: calc(100vh - 36px);
+  border-radius: 13px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.panel-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.panel-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+.panel-body {
+  padding: 14px;
+}
+.panel-body > * + * {
+  margin-top: 13px;
+}
+
+/* ---- cabecera: tu campeón ---- */
+.you-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.you-head.ig {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.you-meta {
+  flex: 1;
+  min-width: 0;
+}
+.you-name {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 21px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+.you-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.lvl {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--accent);
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.you-tags {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.kda-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.kda {
+  font-family: "JetBrains Mono";
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-size: 13px;
+}
+.kda b {
+  font-weight: 700;
+}
+.kda-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.kda-line .div {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+}
+.cs b,
+.gold b {
+  font-family: "JetBrains Mono";
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+}
+.game-time {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "JetBrains Mono";
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: var(--panel-2);
+}
+.clock-ico {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* ---- pills ---- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 5px;
+  line-height: 1;
+}
+.pill-role {
+  background: color-mix(in oklab, var(--accent2) 18%, transparent);
+  color: var(--accent2);
+  border: 1px solid color-mix(in oklab, var(--accent2) 30%, transparent);
+}
+.pill-diff {
+  background: var(--panel-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.pill-ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ---- sección ---- */
+.sec-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+}
+.sec-head.is-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.sec-caret {
+  font-family: "Rajdhani";
+  color: var(--muted);
+  transition: 0.18s;
+  font-size: 16px;
+  line-height: 1;
+}
+.sec-caret.open {
+  transform: rotate(90deg);
+}
+.sec-title {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.sec-side {
+  margin-left: auto;
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.badge-soon {
+  margin-left: auto;
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--accent2) 13%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent2) 26%, transparent);
+}
+.sec-head.is-clickable .badge-soon {
+  margin-left: 8px;
+}
+.sec-head.is-clickable .sec-title {
+  margin-right: auto;
+}
+
+/* ---- listas de picks ---- */
+.picks,
+.counters,
+.enemy-sums {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.pick {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.pick-main {
+  flex: 1;
+  min-width: 0;
+}
+.pick-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pick-name {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 15px;
+}
+.pick-reason {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+/* ---- win rate ---- */
+.wr {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: baseline;
+}
+.wr .pct {
+  font-size: 10px;
+  margin-left: 1px;
+  opacity: 0.8;
+}
+.wr-big {
+  font-size: 16px;
+}
+.wr-fav {
+  color: var(--fav);
+}
+.wr-even {
+  color: var(--even);
+}
+.wr-bad {
+  color: var(--bad);
+}
+
+/* ---- counters ---- */
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+}
+.counter.c-fav {
+  border-left-color: var(--fav);
+}
+.counter.c-even {
+  border-left-color: var(--even);
+}
+.counter.c-bad {
+  border-left-color: var(--bad);
+}
+.counter-main {
+  flex: 1;
+  min-width: 0;
+}
+.counter-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.counter-vs {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 14px;
+}
+.counter-tip {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+/* ---- placeholders / arte real ---- */
+.ph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  overflow: hidden;
+  background: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--accent) 16%, transparent) 0 6px,
+      transparent 6px 12px
+    ),
+    var(--panel-2);
+  border: 1px solid var(--border);
+}
+.ph img,
+.thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ph-thumb {
+  border-radius: 7px;
+}
+.ph-item {
+  border-radius: 5px;
+}
+.ph-skill,
+.ph-spell {
+  border-radius: 5px;
+  background: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--accent2) 16%, transparent) 0 5px,
+      transparent 5px 10px
+    ),
+    var(--panel-2);
+}
+.ph-skill.is-key {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.ph-rune {
+  border-radius: 50%;
+  background: repeating-linear-gradient(
+      135deg,
+      color-mix(in oklab, var(--accent2) 20%, transparent) 0 4px,
+      transparent 4px 8px
+    ),
+    var(--panel-2);
+}
+.ph-rune.is-keystone {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  border-width: 2px;
+}
+.ph-obj {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+}
+.ph-empty {
+  background: var(--panel-2);
+  border-style: dashed;
+}
+.ph-tag {
+  font-family: "JetBrains Mono";
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--muted);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.ph-tag.sm {
+  font-size: 7px;
+}
+.ph-plus {
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 0.6;
+}
+.skill-key {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--text);
+}
+.spell-glyph {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--text);
+}
+.skill-cd {
+  position: absolute;
+  bottom: -1px;
+  right: 1px;
+  font-family: "JetBrains Mono";
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ---- build ---- */
+.build-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 9px;
+}
+.build-row:last-child {
+  margin-bottom: 0;
+}
+.build-label {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: 62px;
+  flex: none;
+  padding-top: 7px;
+}
+.icon-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.icon-row .arrow {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 -1px;
+}
+.skill-prio {
+  font-family: "JetBrains Mono";
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-left: 3px;
+}
+.build-note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+  flex: 1;
+  min-width: 120px;
+  text-wrap: pretty;
+}
+
+/* ---- rejilla de stats ---- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+}
+.stat {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.stat-accent {
+  border-color: color-mix(in oklab, var(--accent) 40%, transparent);
+}
+.stat-label {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 9.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.stat-value {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.stat-accent .stat-value {
+  color: var(--accent);
+}
+.stat-sub {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 1px;
+}
+
+/* ---- objetivos / hechizos enemigos ---- */
+.obj-row {
+  display: flex;
+  gap: 7px;
+}
+.obj {
+  flex: 1;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.obj-name {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.obj-timer {
+  font-family: "JetBrains Mono";
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+}
+.enemy-sums li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+.es-name {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+.es-spells {
+  display: flex;
+  gap: 10px;
+}
+.es-cd {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.es-t {
+  font-family: "JetBrains Mono";
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+}
+.es-cd.ready .es-t {
+  color: var(--fav);
+}
+
+/* ---- preview de runas ---- */
+.rune-preview {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+.rune-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.rune-tree.secondary {
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+}
+.rune-row {
+  display: flex;
+  gap: 7px;
+}
+
+/* ---- slot futuro ---- */
+.future-slot {
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  padding: 10px 11px;
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.015) 0 8px,
+    transparent 8px 16px
+  );
+}
+.future-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.future-title {
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--text);
+  opacity: 0.85;
+}
+.future-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+/* ---- estados de espera / vacío ---- */
+.wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 30px 22px;
+}
+.wait-glyph {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  color: var(--accent);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.wait-title {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.01em;
+}
+.wait-msg {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 8px;
+  max-width: 280px;
+  text-wrap: pretty;
+}
+.wait-steps {
+  list-style: none;
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+}
+.wait-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.step-n {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  flex: none;
+  font-family: "JetBrains Mono";
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.wait-foot {
+  margin-top: 18px;
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.dot-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fav);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 8px 0 var(--fav);
+  }
+}
+.err {
+  color: var(--bad);
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+/* ============ HINT DE ATAJOS (inf. izquierda) ============ */
+.shortcuts {
+  bottom: 18px;
+  left: 18px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 460px;
+  transform-origin: bottom left;
+  transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)) scale(var(--ui-scale));
+}
+.sc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+kbd {
+  font-family: "JetBrains Mono";
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+/* ============ AJUSTES (integrado en la ventana) ============ */
+.settings-pop {
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  color: var(--text);
+}
+.sp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.sp-title {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+/* Pestañas de ajustes */
+.sp-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+}
+.sp-tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sp-tab.active {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: var(--text);
+}
+
+/* Sección de assets */
+.sp-section-title {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.sp-assets-status {
+  font-family: "Saira";
+  font-size: 11.5px;
+  color: var(--text);
+  margin: 8px 0 10px;
+  min-height: 16px;
+}
+.sp-progress {
+  margin-top: 6px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.sp-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.sp-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 18%, var(--panel-2));
+  color: var(--text);
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.sp-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--accent) 32%, var(--panel-2));
+}
+.sp-btn:disabled,
+.sp-btn.is-busy {
+  opacity: 0.6;
+  cursor: default;
+}
+.sp-hint {
+  font-family: "Saira";
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.sp-row {
+  margin-bottom: 13px;
+}
+.sp-row:last-child {
+  margin-bottom: 0;
+}
+.sp-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: "Rajdhani";
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.sp-label .val {
+  font-family: "JetBrains Mono";
+  color: var(--accent);
+}
+input[type="range"] {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 3px;
+  background: var(--panel-2);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
+}
+.sp-select {
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: "Saira";
+  font-size: 12px;
+}
+.sp-themes {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.sp-theme {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  position: relative;
+}
+.sp-theme.active {
+  border-color: var(--text);
+}
+.sp-theme-name {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 7px;
+  font-family: "Rajdhani";
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 700px) {
+  .panel {
+    width: 300px;
+  }
+}
+
+/* ============================================================
+   BACK OFFICE / ANALÍTICA
+   ============================================================ */
+.panel.analytics-mode {
+  width: 600px;
+  max-width: calc(100vw - 24px);
+}
+.analytics {
+  padding: 12px 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.an-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.an-title {
+  font-family: "Rajdhani";
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+.an-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+.an-bar-filters {
+  align-items: center;
+}
+.an-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.an-field-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.an-select,
+.an-input {
+  background: var(--panel-2-solid);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: "Saira";
+  outline: none;
+}
+.an-input {
+  min-width: 150px;
+}
+.an-select:focus,
+.an-input:focus {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.an-btn {
+  background: var(--panel-2-solid);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  width: 30px;
+  height: 28px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.an-btn:hover {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+.an-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.an-pill {
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.an-pill:hover {
+  color: var(--text);
+}
+.an-pill.on {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  color: var(--text);
+}
+.an-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+}
+.an-slider-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.an-slider-val {
+  font-family: "JetBrains Mono";
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.an-slider input[type="range"] {
+  width: 100%;
+}
+.an-summary {
+  font-size: 12px;
+  color: var(--muted);
+}
+.an-sum-strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.an-table-host {
+  border-top: 1px solid var(--border);
+}
+.an-empty {
+  padding: 22px 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.an-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.an-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-2-solid);
+  z-index: 1;
+}
+.an-th {
+  text-align: right;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-weight: 600;
+  font-family: "Rajdhani";
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.an-th:first-child {
+  text-align: left;
+}
+.an-th:hover {
+  color: var(--text);
+}
+.an-th.sorted {
+  color: var(--accent);
+}
+.an-th.sorted::after {
+  content: " ▾";
+}
+.an-th.sorted.asc::after {
+  content: " ▴";
+}
+.an-row td {
+  padding: 5px 8px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+}
+.an-row:hover td {
+  background: color-mix(in oklab, var(--accent2) 8%, transparent);
+}
+.an-champ {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.an-champ-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.an-champ-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.an-champ-role {
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.an-num {
+  text-align: right;
+  font-family: "JetBrains Mono";
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}

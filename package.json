@@ -1,0 +1,35 @@
+{
+  "name": "lol-overlay-native",
+  "version": "0.1.0",
+  "description": "Overlay de escritorio para League of Legends usando las APIs oficiales (Live Client Data + LCU) sin leer memoria ni inyectar.",
+  "author": "",
+  "license": "MIT",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json",
+    "copy:assets": "node scripts/copy-assets.mjs",
+    "build": "npm run clean && npm run build:main && npm run build:renderer && npm run copy:assets",
+    "build:collector": "tsc -p tsconfig.collector.json",
+    "collect": "npm run build:collector && node dist/collector/index.js collect",
+    "aggregate": "npm run build:collector && node dist/collector/index.js aggregate",
+    "build-db": "node scripts/build-db.mjs",
+    "report": "node scripts/build-report.mjs",
+    "gen-types": "node scripts/gen-riot-types.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev",
+    "watch:main": "tsc -p tsconfig.main.json --watch",
+    "watch:renderer": "tsc -p tsconfig.renderer.json --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "electron": "^31.0.0",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1",
+    "ws": "^8.17.0"
+  }
+}
