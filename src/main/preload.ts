@@ -1,16 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type {
-  AppState,
-  AssetsInfo,
-  AssetsProgress,
-  OverlayApi,
-  AnalyticsApi,
-  AnalyticsMeta,
-  ChampionStatRow,
-  CollectRequest,
-  CollectStatus,
-  CollectProgress,
-} from '../shared/types';
+import type { AppState, AssetsInfo, AssetsProgress, OverlayApi } from '../shared/types';
 
 /**
  * Puente seguro (contextIsolation) entre el renderer y el proceso main.
@@ -48,28 +37,6 @@ const api: OverlayApi = {
 };
 
 contextBridge.exposeInMainWorld('overlay', api);
-
-/** Back office: consultas a las bases SQLite del colector. */
-const analytics: AnalyticsApi = {
-  meta(region?: string): Promise<AnalyticsMeta> {
-    return ipcRenderer.invoke('analytics:meta', region);
-  },
-  champions(region: string, patch?: string): Promise<ChampionStatRow[]> {
-    return ipcRenderer.invoke('analytics:champions', region, patch);
-  },
-  collect(req: CollectRequest): Promise<CollectStatus> {
-    return ipcRenderer.invoke('analytics:collect', req);
-  },
-  status(region: string): Promise<CollectStatus> {
-    return ipcRenderer.invoke('analytics:status', region);
-  },
-  onCollectProgress(cb: (p: CollectProgress) => void): () => void {
-    const listener = (_e: unknown, p: CollectProgress) => cb(p);
-    ipcRenderer.on('analytics:collect-progress', listener);
-    return () => ipcRenderer.removeListener('analytics:collect-progress', listener);
-  },
-};
-contextBridge.exposeInMainWorld('analytics', analytics);
 
 // Canales internos para la gestión de interactividad por hover.
 contextBridge.exposeInMainWorld('__overlayInternal', {

@@ -3,6 +3,4 @@ dist/
 *.log
 .DS_Store
 .cache/
-# Datos crudos y estadísticas generadas por el colector (pueden pesar cientos de MB)
-data/
-.env
+.claude/settings.local.json

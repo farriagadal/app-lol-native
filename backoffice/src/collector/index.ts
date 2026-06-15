@@ -53,15 +53,21 @@ async function main(): Promise<void> {
   const region = flags.get('region') ?? 'la2';
 
   switch (command) {
-    case 'collect':
+    case 'collect': {
+      const tiers = (flags.get('tiers') ?? '')
+        .split(',')
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean);
       await collect({
         region,
         apiKey: getApiKey(),
         maxMatches: num(flags, 'max', 3000),
         matchesPerPlayer: Math.min(100, Math.max(1, num(flags, 'per-player', 15))),
         maxPlayersPerBucket: Math.max(1, num(flags, 'players-per-bucket', 40)),
+        tiers: tiers.length ? tiers : undefined,
       });
       break;
+    }
 
     case 'aggregate':
       await aggregate({

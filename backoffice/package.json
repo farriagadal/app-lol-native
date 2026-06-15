@@ -1,0 +1,23 @@
+{
+  "name": "lol-backoffice",
+  "version": "0.1.0",
+  "description": "Back office independiente para data analysis de League of Legends: colector de la API de Riot, base SQLite y panel web con filtros.",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && node dist/server/server.js",
+    "dev": "npm run build && node dist/server/server.js",
+    "collect": "npm run build && node dist/collector/index.js collect",
+    "aggregate": "npm run build && node dist/collector/index.js aggregate",
+    "gen-types": "node scripts/gen-riot-types.mjs",
+    "report": "node scripts/build-report.mjs"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

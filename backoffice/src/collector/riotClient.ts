@@ -4,6 +4,9 @@ import { log } from './log';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Tiempo máximo por petición; si la API cuelga, aborta y reintenta. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 /** Error no reintentable (4xx que no es 429): clave inválida, request mal formada, etc. */
 class TerminalHttpError extends Error {}
 
@@ -27,7 +30,7 @@ export class RiotClient {
    * GET genérico. `routing` es el subdominio (p.ej. 'la2' o 'americas').
    * Lanza si tras varios reintentos sigue fallando; devuelve null en 404.
    */
-  async get<T>(routing: string, path: string, maxRetries = 6): Promise<T | null> {
+  async get<T>(routing: string, path: string, maxRetries = 8): Promise<T | null> {
     const url = `${this.host(routing)}${path}`;
     let attempt = 0;
 
@@ -38,6 +41,7 @@ export class RiotClient {
       try {
         const res = await fetch(url, {
           headers: { 'X-Riot-Token': this.apiKey },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         });
 
         if (res.status === 404) return null;

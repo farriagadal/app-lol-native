@@ -1,16 +1,12 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import path from 'node:path';
 import { Overlay } from './orchestrator';
-import { StatsDb } from './analysis/statsDb';
-import { CollectRunner } from './analysis/collectRunner';
-import type { AppState, CollectRequest } from '../shared/types';
+import type { AppState } from '../shared/types';
 
 let win: BrowserWindow | null = null;
 let interactive = false; // false => click-through (no captura el ratón)
 let lastState: AppState | null = null;
 const overlay = new Overlay();
-const statsDb = new StatsDb(overlay.ddragon);
-const collectRunner = new CollectRunner(overlay.ddragon);
 
 // Evita atenuaciones del compositor sobre la ventana sin foco.
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
@@ -108,20 +104,6 @@ function wireIpc(): void {
   ipcMain.handle('get-interactive', () => interactive);
   ipcMain.handle('get-assets-info', () => overlay.ddragon.info());
   ipcMain.handle('update-assets', (_e, force: boolean) => overlay.updateAssets(force));
-
-  // Back office / analítica (bases SQLite del colector).
-  ipcMain.handle('analytics:meta', (_e, region?: string) => statsDb.meta(region));
-  ipcMain.handle('analytics:champions', (_e, region: string, patch?: string) =>
-    statsDb.champions(region, patch),
-  );
-  ipcMain.handle('analytics:status', (_e, region: string) => collectRunner.status(region));
-  ipcMain.handle('analytics:collect', async (_e, req: CollectRequest) => {
-    const status = await collectRunner.run(req, (p) =>
-      win?.webContents.send('analytics:collect-progress', p),
-    );
-    statsDb.reload(req.region); // la base se reconstruyó: refresca la cache
-    return status;
-  });
 }
 
 app.whenReady().then(async () => {

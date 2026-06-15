@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { collect } from '../../collector/collect';
-import { buildDb } from './dbBuilder';
-import type { DataDragon } from '../services/dataDragon';
-import type { CollectRequest, CollectStatus, CollectProgress } from '../../shared/types';
+import { collect } from '../collector/collect';
+import { buildDb } from './buildDb';
+import type { CollectRequest, CollectStatus, CollectProgress } from './types';
 
 /**
- * Orquesta una recolección lanzada desde la app:
+ * Orquesta una recolección lanzada desde el panel:
  *   collect (API de Riot -> matches.jsonl) -> buildDb (-> lol.db)
  * y persiste el estado (última actualización OK / último error) en
  * data/<region>/collect-status.json. Evita ejecuciones simultáneas por región.
@@ -14,10 +13,7 @@ import type { CollectRequest, CollectStatus, CollectProgress } from '../../share
 export class CollectRunner {
   private running = new Set<string>();
 
-  constructor(
-    private ddragon: DataDragon,
-    private dataDir = path.resolve(process.cwd(), 'data'),
-  ) {}
+  constructor(private dataDir: string) {}
 
   private statusFile(region: string): string {
     return path.join(this.dataDir, region, 'collect-status.json');
@@ -26,7 +22,6 @@ export class CollectRunner {
     return path.join(this.dataDir, region, 'seen-matches.txt');
   }
 
-  /** Cuenta partidas en disco contando líneas de seen-matches.txt. */
   private countMatches(region: string): number {
     const f = this.seenFile(region);
     if (!fs.existsSync(f)) return 0;
@@ -51,6 +46,10 @@ export class CollectRunner {
     fs.writeFileSync(this.statusFile(region), JSON.stringify(s, null, 2));
   }
 
+  isRunning(region: string): boolean {
+    return this.running.has(region);
+  }
+
   status(region: string): CollectStatus {
     const s = this.readStatusFile(region);
     return {
@@ -67,7 +66,7 @@ export class CollectRunner {
     onProgress: (p: CollectProgress) => void,
   ): Promise<CollectStatus> {
     const { region } = req;
-    if (this.running.has(region)) return this.status(region); // ya en curso
+    if (this.running.has(region)) return this.status(region);
     if (!req.apiKey?.trim()) {
       const prev = this.readStatusFile(region);
       this.writeStatusFile(region, { ...prev, lastError: 'Falta la API key de Riot.' });
@@ -76,7 +75,10 @@ export class CollectRunner {
     }
 
     this.running.add(region);
-    onProgress({ phase: 'starting', region, collected: this.countMatches(region), target: req.maxMatches });
+    const before = this.countMatches(region);
+    onProgress({ phase: 'starting', region, collected: before, target: req.maxMatches });
+
+    let error: string | null = null;
     try {
       await collect({
         region,
@@ -84,29 +86,37 @@ export class CollectRunner {
         maxMatches: req.maxMatches,
         matchesPerPlayer: Math.min(100, Math.max(1, req.matchesPerPlayer)),
         maxPlayersPerBucket: Math.max(1, req.maxPlayersPerBucket ?? 40),
+        tiers: req.tiers,
         onProgress: (p) =>
           onProgress({ phase: 'collecting', region, collected: p.collected, target: p.target, bucket: p.bucket }),
       });
-
-      onProgress({ phase: 'building-db', region, collected: this.countMatches(region), target: req.maxMatches });
-      await buildDb({
-        region,
-        championName: (id) => this.ddragon.championByKey(id)?.id ?? null,
-        dataDir: this.dataDir,
-      });
-
-      this.writeStatusFile(region, { lastCollectedAt: Date.now(), lastError: null });
-      const status = this.status(region);
-      onProgress({ phase: 'done', region, collected: status.totalMatches, target: req.maxMatches });
-      return status;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const prev = this.readStatusFile(region);
-      this.writeStatusFile(region, { lastCollectedAt: prev.lastCollectedAt, lastError: msg });
-      onProgress({ phase: 'error', region, collected: this.countMatches(region), target: req.maxMatches, message: msg });
-      return this.status(region);
-    } finally {
-      this.running.delete(region);
+      error = err instanceof Error ? err.message : String(err);
     }
+
+    // Reconstruir la base si hay datos nuevos (o si aún no existe), para que lo
+    // recolectado —parcial o completo— quede consultable. Así, si falló a mitad,
+    // lo avanzado no se pierde y el siguiente intento continúa desde aquí.
+    const after = this.countMatches(region);
+    const dbExists = fs.existsSync(path.join(this.dataDir, region, 'lol.db'));
+    if (after > 0 && (after > before || !dbExists)) {
+      onProgress({ phase: 'building-db', region, collected: after, target: req.maxMatches });
+      try {
+        await buildDb(region, this.dataDir);
+      } catch (err) {
+        error = error ?? (err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    if (error) {
+      const prev = this.readStatusFile(region);
+      this.writeStatusFile(region, { lastCollectedAt: prev.lastCollectedAt, lastError: error });
+      onProgress({ phase: 'error', region, collected: after, target: req.maxMatches, message: error });
+    } else {
+      this.writeStatusFile(region, { lastCollectedAt: Date.now(), lastError: null });
+      onProgress({ phase: 'done', region, collected: after, target: req.maxMatches });
+    }
+    this.running.delete(region);
+    return this.status(region);
   }
 }

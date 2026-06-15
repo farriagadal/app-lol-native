@@ -185,70 +185,8 @@ export interface OverlayApi {
   onAssetsProgress(cb: (p: AssetsProgress) => void): () => void;
 }
 
-/* ------------------------------------------------------------------ */
-/* Back office / analítica (lee las bases SQLite del colector)         */
-/* ------------------------------------------------------------------ */
-
-/** Una fila de estadísticas por campeón y rol. */
-export interface ChampionStatRow {
-  championName: string;   // id de Data Dragon (p.ej. "Ahri")
-  iconUrl: string | null; // icono local (file://) o remoto
-  role: string;           // TOP | JUNGLE | MIDDLE | BOTTOM | UTILITY
-  games: number;
-  wins: number;
-  winRate: number;        // 0..1
-  pickRate: number;       // 0..1
-  banRate: number;        // 0..1
-}
-
-export interface AnalyticsMeta {
-  regions: string[];          // regiones con base disponible
-  region: string | null;      // región activa
-  patches: string[];          // parches presentes (desc)
-  totalGames: number;
-  totalParticipants: number;
-}
-
-/** Parámetros de una recolección lanzada desde la app. */
-export interface CollectRequest {
-  region: string;
-  apiKey: string;
-  maxMatches: number;        // total de partidas objetivo
-  matchesPerPlayer: number;  // IDs recientes por jugador (1..100)
-  maxPlayersPerBucket?: number;
-}
-
-/** Progreso emitido durante una recolección. */
-export interface CollectProgress {
-  phase: 'starting' | 'collecting' | 'building-db' | 'done' | 'error';
-  region: string;
-  collected: number;
-  target: number;
-  bucket?: string;
-  message?: string;
-}
-
-/** Estado persistido de la última recolección de una región. */
-export interface CollectStatus {
-  region: string;
-  lastCollectedAt: number | null; // epoch ms de la última recolección OK
-  lastError: string | null;       // mensaje del último fallo (o null)
-  totalMatches: number;           // partidas en disco
-  running: boolean;               // hay una recolección en curso
-}
-
-/** API del back office expuesta al renderer. */
-export interface AnalyticsApi {
-  meta(region?: string): Promise<AnalyticsMeta>;
-  champions(region: string, patch?: string): Promise<ChampionStatRow[]>;
-  collect(req: CollectRequest): Promise<CollectStatus>;
-  status(region: string): Promise<CollectStatus>;
-  onCollectProgress(cb: (p: CollectProgress) => void): () => void;
-}
-
 declare global {
   interface Window {
     overlay: OverlayApi;
-    analytics: AnalyticsApi;
   }
 }

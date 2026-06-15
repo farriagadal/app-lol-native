@@ -4,8 +4,6 @@ import type {
   AssetsProgress,
   BuildAdvice,
   MatchupAdvice,
-  AnalyticsMeta,
-  ChampionStatRow,
 } from '../shared/types';
 
 /* ============================================================
@@ -119,25 +117,6 @@ let showSettings = false;
 let settingsTab: 'general' | 'apariencia' = LS.get('settingsTab', 'general') as 'general' | 'apariencia';
 let lastState: AppState | null = null;
 const sectionOpen = new Map<string, boolean>();
-
-/* ---- Back office / analítica ---- */
-type AnSortKey = 'championName' | 'games' | 'winRate' | 'pickRate' | 'banRate';
-let showAnalytics = false;
-let anMeta: AnalyticsMeta | null = null;
-let anRows: ChampionStatRow[] = [];
-let anLoading = false;
-let anLoaded = false;
-let anRegion = LS.get('anRegion', '');
-let anPatch = LS.get('anPatch', 'all');
-let anRole = LS.get('anRole', 'ALL');
-let anSearch = '';
-let anMinGames = Number(LS.get('anMinGames', '1'));
-let anMinWR = Number(LS.get('anMinWR', '0'));
-let anSortKey = LS.get('anSortKey', 'games') as AnSortKey;
-let anSortDir: 1 | -1 = LS.get('anSortDir', 'desc') === 'asc' ? 1 : -1;
-/* Hosts que se repintan al filtrar (sin reconstruir los controles ni perder foco). */
-let anSummaryHost: HTMLElement | null = null;
-let anTableHost: HTMLElement | null = null;
 
 /* Estado de assets (Data Dragon en local) para la pestaña General. */
 let assetsInfo: AssetsInfo | null = null;
@@ -874,295 +853,6 @@ function settingsPopover(): HTMLElement {
 }
 
 /* ============================================================
-   BACK OFFICE / ANALÍTICA
-   ============================================================ */
-const ROLE_PILLS: Array<[string, string]> = [
-  ['ALL', 'Todos'], ['TOP', 'Top'], ['JUNGLE', 'Jungla'],
-  ['MIDDLE', 'Mid'], ['BOTTOM', 'ADC'], ['UTILITY', 'Support'],
-];
-const AN_COLS: Array<{ key: AnSortKey; label: string }> = [
-  { key: 'championName', label: 'Campeón' },
-  { key: 'games', label: 'Juegos' },
-  { key: 'winRate', label: 'Win %' },
-  { key: 'pickRate', label: 'Pick %' },
-  { key: 'banRate', label: 'Ban %' },
-];
-
-function openAnalytics(): void {
-  showAnalytics = true;
-  showSettings = false;
-  setInteractive(true); // el back office necesita ratón sí o sí
-  if (!anLoaded && !anLoading) void loadAnalytics();
-  else render();
-}
-function closeAnalytics(): void {
-  showAnalytics = false;
-  if (!pinned) setInteractive(false);
-  render();
-}
-
-async function loadAnalytics(): Promise<void> {
-  anLoading = true;
-  render();
-  try {
-    anMeta = await window.analytics.meta(anRegion || undefined);
-    if (anMeta.region) anRegion = anMeta.region;
-    if (anPatch !== 'all' && !anMeta.patches.includes(anPatch)) anPatch = 'all';
-    anRows = anRegion ? await window.analytics.champions(anRegion, anPatch) : [];
-    anLoaded = true;
-  } catch (err) {
-    anRows = [];
-    console.error('Fallo al cargar analítica', err);
-  } finally {
-    anLoading = false;
-    render();
-  }
-}
-
-async function reloadChampions(): Promise<void> {
-  anLoading = true;
-  render();
-  try {
-    anRows = anRegion ? await window.analytics.champions(anRegion, anPatch) : [];
-  } catch (err) {
-    anRows = [];
-    console.error('Fallo al consultar campeones', err);
-  } finally {
-    anLoading = false;
-    render();
-  }
-}
-
-function analyticsFiltered(): ChampionStatRow[] {
-  const q = anSearch.trim().toLowerCase();
-  const rows = anRows.filter(
-    (r) =>
-      (anRole === 'ALL' || r.role === anRole) &&
-      r.games >= anMinGames &&
-      r.winRate * 100 >= anMinWR &&
-      (!q || r.championName.toLowerCase().includes(q)),
-  );
-  rows.sort((a, b) => {
-    const A = a[anSortKey];
-    const B = b[anSortKey];
-    return typeof A === 'string'
-      ? String(A).localeCompare(String(B)) * anSortDir
-      : ((A as number) - (B as number)) * anSortDir;
-  });
-  return rows;
-}
-
-/** Repinta solo resumen + tabla (sin tocar los controles ni el foco). */
-function renderAnalyticsTable(): void {
-  if (!anSummaryHost || !anTableHost) return;
-  const rows = analyticsFiltered();
-
-  anSummaryHost.replaceChildren();
-  const total = anMeta?.totalGames ?? 0;
-  anSummaryHost.append(
-    el('span', 'an-sum-strong', String(rows.length)),
-    el('span', undefined, ' campeones · '),
-    el('span', undefined, `${total} partidas · parche ${anPatch === 'all' ? 'todos' : anPatch}`),
-  );
-
-  anTableHost.replaceChildren();
-  if (anLoading) {
-    anTableHost.append(el('div', 'an-empty', 'Cargando…'));
-    return;
-  }
-  if (!anRows.length) {
-    anTableHost.append(
-      el('div', 'an-empty',
-        anMeta && anMeta.regions.length === 0
-          ? 'No hay bases de datos. Ejecuta: npm run collect → aggregate → build-db.'
-          : 'Sin datos para esta región/parche.'),
-    );
-    return;
-  }
-  if (!rows.length) {
-    anTableHost.append(el('div', 'an-empty', 'Ningún campeón pasa los filtros.'));
-    return;
-  }
-
-  const table = el('table', 'an-table');
-  const thead = el('thead');
-  const htr = el('tr');
-  for (const col of AN_COLS) {
-    const sorted = anSortKey === col.key;
-    const th = el('th', 'an-th' + (sorted ? ' sorted' + (anSortDir === 1 ? ' asc' : '') : ''), col.label);
-    th.addEventListener('click', () => {
-      if (anSortKey === col.key) anSortDir = (anSortDir === 1 ? -1 : 1);
-      else { anSortKey = col.key; anSortDir = col.key === 'championName' ? 1 : -1; }
-      LS.set('anSortKey', anSortKey);
-      LS.set('anSortDir', anSortDir === 1 ? 'asc' : 'desc');
-      renderAnalyticsTable();
-    });
-    htr.append(th);
-  }
-  thead.append(htr);
-  table.append(thead);
-
-  const tbody = el('tbody');
-  for (const r of rows) {
-    const tr = el('tr', 'an-row');
-    const cName = el('td', 'an-champ');
-    cName.append(thumb(26, r.iconUrl ?? undefined, r.championName));
-    const nm = el('div', 'an-champ-meta');
-    nm.append(el('span', 'an-champ-name', r.championName));
-    nm.append(el('span', 'an-champ-role', ROLE_PILLS.find((p) => p[0] === r.role)?.[1] ?? r.role));
-    cName.append(nm);
-    tr.append(cName);
-
-    tr.append(el('td', 'an-num', String(r.games)));
-
-    const tone = toneForPct(r.winRate * 100);
-    const wrCell = el('td');
-    wrCell.append(winRate(r.winRate * 100, tone));
-    tr.append(wrCell);
-
-    tr.append(el('td', 'an-num', (r.pickRate * 100).toFixed(1)));
-    tr.append(el('td', 'an-num', (r.banRate * 100).toFixed(1)));
-    tbody.append(tr);
-  }
-  table.append(tbody);
-  anTableHost.append(table);
-}
-
-function analyticsView(): HTMLElement {
-  const root = el('div', 'analytics');
-
-  // Cabecera
-  const head = el('div', 'an-head');
-  head.append(el('span', 'an-title', 'Back office · estadísticas'));
-  const close = el('button', 'ctrl-btn', '✕');
-  close.title = 'Cerrar back office';
-  close.addEventListener('click', closeAnalytics);
-  head.append(el('span', 'ctrl-spacer'), close);
-  root.append(head);
-
-  // Fila 1: región, parche, búsqueda, recargar
-  const bar1 = el('div', 'an-bar');
-
-  const regSel = el('select', 'an-select');
-  const regions = anMeta?.regions ?? [];
-  if (!regions.length) regSel.append(el('option', undefined, '— sin datos —'));
-  for (const rg of regions) {
-    const o = el('option', undefined, rg.toUpperCase());
-    o.value = rg;
-    if (rg === anRegion) o.selected = true;
-    regSel.append(o);
-  }
-  regSel.addEventListener('change', () => {
-    anRegion = regSel.value;
-    LS.set('anRegion', anRegion);
-    void loadAnalytics(); // región nueva => recargar meta + filas
-  });
-  bar1.append(labeled('Región', regSel));
-
-  const patchSel = el('select', 'an-select');
-  const allOpt = el('option', undefined, 'Todos');
-  allOpt.value = 'all';
-  if (anPatch === 'all') allOpt.selected = true;
-  patchSel.append(allOpt);
-  for (const pt of anMeta?.patches ?? []) {
-    const o = el('option', undefined, pt);
-    o.value = pt;
-    if (pt === anPatch) o.selected = true;
-    patchSel.append(o);
-  }
-  patchSel.addEventListener('change', () => {
-    anPatch = patchSel.value;
-    LS.set('anPatch', anPatch);
-    void reloadChampions();
-  });
-  bar1.append(labeled('Parche', patchSel));
-
-  const search = el('input', 'an-input') as HTMLInputElement;
-  search.type = 'search';
-  search.placeholder = 'Buscar campeón…';
-  search.value = anSearch;
-  search.addEventListener('input', () => {
-    anSearch = search.value;
-    renderAnalyticsTable();
-  });
-  bar1.append(labeled('Buscar', search));
-
-  const reload = el('button', 'an-btn', '↻');
-  reload.title = 'Recargar desde la base';
-  reload.addEventListener('click', () => void loadAnalytics());
-  bar1.append(reload);
-  root.append(bar1);
-
-  // Fila 2: roles + sliders
-  const bar2 = el('div', 'an-bar an-bar-filters');
-  const pills = el('div', 'an-pills');
-  for (const [val, label] of ROLE_PILLS) {
-    const p = el('span', 'an-pill' + (anRole === val ? ' on' : ''), label);
-    p.addEventListener('click', () => {
-      anRole = val;
-      LS.set('anRole', anRole);
-      pills.querySelectorAll('.an-pill').forEach((x) => x.classList.remove('on'));
-      p.classList.add('on');
-      renderAnalyticsTable();
-    });
-    pills.append(p);
-  }
-  bar2.append(pills);
-
-  bar2.append(slider('Mín. juegos', anMinGames, 1, 50, 1, (v) => {
-    anMinGames = v;
-    LS.set('anMinGames', String(v));
-    renderAnalyticsTable();
-  }));
-  bar2.append(slider('WR mín. %', anMinWR, 0, 60, 1, (v) => {
-    anMinWR = v;
-    LS.set('anMinWR', String(v));
-    renderAnalyticsTable();
-  }));
-  root.append(bar2);
-
-  // Resumen + tabla (hosts repintables)
-  anSummaryHost = el('div', 'an-summary');
-  root.append(anSummaryHost);
-  anTableHost = el('div', 'an-table-host');
-  root.append(anTableHost);
-  renderAnalyticsTable();
-
-  return root;
-}
-
-/** Pequeño wrapper etiqueta + control para las barras de filtros. */
-function labeled(label: string, control: HTMLElement): HTMLElement {
-  const wrap = el('label', 'an-field');
-  wrap.append(el('span', 'an-field-label', label), control);
-  return wrap;
-}
-
-/** Slider con etiqueta y valor en vivo (no dispara render global). */
-function slider(
-  label: string, value: number, min: number, max: number, step: number,
-  onChange: (v: number) => void,
-): HTMLElement {
-  const wrap = el('div', 'an-slider');
-  const top = el('div', 'an-slider-top');
-  top.append(el('span', 'an-field-label', label));
-  const out = el('span', 'an-slider-val', String(value));
-  top.append(out);
-  wrap.append(top);
-  const input = el('input') as HTMLInputElement;
-  input.type = 'range';
-  input.min = String(min); input.max = String(max); input.step = String(step);
-  input.value = String(value);
-  input.addEventListener('input', () => {
-    const v = Number(input.value);
-    out.textContent = String(v);
-    onChange(v);
-  });
-  wrap.append(input);
-  return wrap;
-}
-
-/* ============================================================
    RENDER PRINCIPAL
    ============================================================ */
 /** Cabecera de la ventana = barra de control (fase + botones). */
@@ -1184,7 +874,6 @@ function controlHeader(state: AppState): HTMLElement {
     b.addEventListener('click', onClick);
     return b;
   };
-  bar.append(mkBtn('📊', 'Back office · estadísticas', () => { showAnalytics ? closeAnalytics() : openAnalytics(); }, { active: showAnalytics }));
   bar.append(mkBtn('📌', 'Fijar interactivo (Ctrl+Shift+O)', togglePin, { active: pinned }));
   bar.append(mkBtn(panelHidden ? '🚫' : '👁', 'Mostrar / ocultar contenido', () => { panelHidden = !panelHidden; render(); }, { active: panelHidden }));
   bar.append(mkBtn('↺', 'Restablecer posiciones (Ctrl+Shift+R)', resetLayout));
@@ -1197,18 +886,8 @@ function controlHeader(state: AppState): HTMLElement {
 /** Ventana única del overlay: cabecera (barra) + cuerpo desplazable. */
 function overlayWindow(state: AppState): HTMLElement {
   const region = el('div', 'overlay-region main-region');
-  const panel = el('div', 'panel' + (pinned ? ' pinned' : '') + (showAnalytics ? ' analytics-mode' : ''));
+  const panel = el('div', 'panel' + (pinned ? ' pinned' : ''));
   panel.append(controlHeader(state));
-
-  // Back office: ocupa todo el cuerpo de la ventana.
-  if (showAnalytics) {
-    const scroll = el('div', 'panel-scroll');
-    scroll.append(analyticsView());
-    panel.append(scroll);
-    region.append(panel);
-    registerRegion(region, 'main');
-    return region;
-  }
 
   // El cuerpo (contenido por fase + ajustes) solo cuando no está colapsado.
   if (!panelHidden) {

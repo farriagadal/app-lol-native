@@ -1,48 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import readline from 'node:readline';
+import initSqlJs from 'sql.js';
+import type { MatchDTO } from '../collector/riotTypes';
+
 /**
- * Construye una base SQLite normalizada (data/<region>/lol.db) a partir del
- * raw store data/<region>/matches.jsonl. Usa sql.js (WASM, sin compilador
- * nativo) y produce un .db ESTÁNDAR: lo abren DB Browser, DBeaver, Python,
- * Power BI, etc.
- *
- * Arquitectura ELT:
- *   matches.jsonl  (raw inmutable)  --build-db-->  lol.db (consultable)
- *
- * Uso:  node scripts/build-db.mjs [region]   (def. la2)
+ * Construye data/<region>/lol.db (SQLite normalizada) desde el raw store
+ * data/<region>/matches.jsonl, con sql.js (sin compilador nativo).
  */
-import fs from 'fs';
-import path from 'path';
-import readline from 'readline';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const initSqlJs = require('sql.js');
-
-const region = process.argv[2] || 'la2';
-const jsonl = path.resolve('data', region, 'matches.jsonl');
-if (!fs.existsSync(jsonl)) {
-  console.error(`No existe ${jsonl}. Corre primero "npm run collect".`);
-  process.exit(1);
-}
-
-// --- Data Dragon: championId numérico -> nombre (para los baneos) -----------
-async function championMap() {
-  const versions = await (
-    await fetch('https://ddragon.leagueoflegends.com/api/versions.json')
-  ).json();
-  const v = versions[0];
-  const champ = await (
-    await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/en_US/champion.json`)
-  ).json();
-  const map = new Map();
-  for (const c of Object.values(champ.data)) map.set(Number(c.key), c.id);
-  return { v, map };
-}
 
 const SCHEMA = `
 CREATE TABLE matches (
   match_id TEXT PRIMARY KEY,
   patch TEXT, game_version TEXT, queue_id INTEGER, game_mode TEXT,
-  game_duration INTEGER, game_creation INTEGER, platform_id TEXT, winning_team INTEGER
+  game_duration INTEGER, game_creation INTEGER, platform_id TEXT, winning_team INTEGER,
+  tier TEXT
 );
 CREATE TABLE participants (
   match_id TEXT, participant_id INTEGER, puuid TEXT, team_id INTEGER,
@@ -81,8 +53,7 @@ SELECT p.champion_name, p.team_position AS role,
   ROUND(COUNT(*) * 1.0 / (SELECT COUNT(*) FROM matches), 4) AS pick_rate,
   ROUND((SELECT COUNT(*) FROM bans b WHERE b.champion_name = p.champion_name)
         * 1.0 / (SELECT COUNT(*) FROM matches), 4) AS ban_rate
-FROM participants p
-WHERE p.team_position <> ''
+FROM participants p WHERE p.team_position <> ''
 GROUP BY p.champion_name, p.team_position;
 
 CREATE VIEW v_meta AS
@@ -96,34 +67,74 @@ CREATE INDEX ix_part_champ ON participants(champion_name);
 CREATE INDEX ix_part_role ON participants(team_position);
 CREATE INDEX ix_part_champ_role ON participants(champion_name, team_position);
 CREATE INDEX ix_match_patch ON matches(patch);
+CREATE INDEX ix_match_tier ON matches(tier);
 CREATE INDEX ix_ban_champ ON bans(champion_name);
 `;
 
-const num = (v) => (typeof v === 'number' ? v : null);
-const ch = (p, k) => (p.challenges && typeof p.challenges[k] === 'number' ? p.challenges[k] : null);
-const patchOf = (gv) => {
+const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+const ch = (p: Record<string, unknown>, k: string): number | null => {
+  const c = p.challenges as Record<string, unknown> | undefined;
+  return c && typeof c[k] === 'number' ? (c[k] as number) : null;
+};
+const patchOf = (gv: string): string => {
   const a = (gv || '').split('.');
   return a.length >= 2 ? `${a[0]}.${a[1]}` : gv || '';
 };
 
-async function main() {
-  const { v, map } = await championMap();
-  const SQL = await initSqlJs({
-    locateFile: (f) => path.resolve('node_modules/sql.js/dist', f),
-  });
+interface ChampionJson {
+  data: Record<string, { key: string; id: string }>;
+}
+
+/** numericId -> id de Data Dragon (p.ej. 103 -> "Ahri"), para los baneos. */
+async function championMap(): Promise<Map<number, string>> {
+  const versions = (await (
+    await fetch('https://ddragon.leagueoflegends.com/api/versions.json')
+  ).json()) as string[];
+  const v = versions[0];
+  const champ = (await (
+    await fetch(`https://ddragon.leagueoflegends.com/cdn/${v}/data/en_US/champion.json`)
+  ).json()) as ChampionJson;
+  const map = new Map<number, string>();
+  for (const c of Object.values(champ.data)) map.set(Number(c.key), c.id);
+  return map;
+}
+
+export async function buildDb(
+  region: string,
+  dataDir: string,
+): Promise<{ matches: number; outPath: string }> {
+  const jsonl = path.join(dataDir, region, 'matches.jsonl');
+  if (!fs.existsSync(jsonl)) {
+    throw new Error(`No hay datos en ${jsonl} (ejecuta una recolección primero).`);
+  }
+
+  // Rango (tier) por partida, escrito por el colector en match-tier.tsv.
+  const tierMap = new Map<string, string>();
+  const tierFile = path.join(dataDir, region, 'match-tier.tsv');
+  if (fs.existsSync(tierFile)) {
+    for (const line of fs.readFileSync(tierFile, 'utf8').split('\n')) {
+      const i = line.indexOf('\t');
+      if (i <= 0) continue;
+      const id = line.slice(0, i).trim();
+      const t = line.slice(i + 1).trim();
+      if (id && t && !tierMap.has(id)) tierMap.set(id, t);
+    }
+  }
+
+  const map = await championMap();
+  const wasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
+  const SQL = await initSqlJs({ locateFile: () => wasmPath });
   const db = new SQL.Database();
   db.run(SCHEMA);
   db.run('BEGIN TRANSACTION;');
 
-  const insMatch = db.prepare(
-    `INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?)`,
-  );
+  const insMatch = db.prepare('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?,?)');
   const insPart = db.prepare(
     `INSERT OR IGNORE INTO participants VALUES (${Array(53).fill('?').join(',')})`,
   );
-  const insBan = db.prepare(`INSERT INTO bans VALUES (?,?,?,?,?)`);
+  const insBan = db.prepare('INSERT INTO bans VALUES (?,?,?,?,?)');
   const insTeam = db.prepare(
-    `INSERT OR IGNORE INTO team_objectives VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    'INSERT OR IGNORE INTO team_objectives VALUES (?,?,?,?,?,?,?,?,?,?,?)',
   );
 
   let matches = 0;
@@ -135,25 +146,28 @@ async function main() {
   for await (const line of rl) {
     const t = line.trim();
     if (!t) continue;
-    let m;
+    let m: MatchDTO;
     try {
-      m = JSON.parse(t);
+      m = JSON.parse(t) as MatchDTO;
     } catch {
       continue;
     }
     const info = m.info;
     if (!info) continue;
     const mid = m.metadata.matchId;
-    const winTeam = (info.teams.find((x) => x.win) || {}).teamId ?? null;
+    const winTeam = info.teams.find((x) => x.win)?.teamId ?? null;
 
     insMatch.run([
       mid, patchOf(info.gameVersion), info.gameVersion, info.queueId, info.gameMode,
       info.gameDuration, info.gameCreation ?? null, info.platformId ?? null, winTeam,
+      tierMap.get(mid) ?? null,
     ]);
 
-    for (const p of info.participants) {
-      const st = (p.perks && p.perks.styles) || [];
-      const keystone = st[0] && st[0].selections && st[0].selections[0] ? st[0].selections[0].perk : null;
+    for (const p of info.participants as unknown as Array<Record<string, unknown>>) {
+      const styles =
+        ((p.perks as { styles?: Array<{ style: number; selections?: Array<{ perk: number }> }> })
+          ?.styles) ?? [];
+      const keystone = styles[0]?.selections?.[0]?.perk ?? null;
       insPart.run([
         mid, p.participantId, p.puuid, p.teamId,
         p.championId, p.championName, p.teamPosition, p.win ? 1 : 0,
@@ -169,20 +183,21 @@ async function main() {
         num(p.turretTakedowns), ch(p, 'dragonTakedowns'), num(p.baronKills), ch(p, 'soloKills'),
         num(p.doubleKills), num(p.tripleKills), num(p.quadraKills), num(p.pentaKills),
         num(p.timePlayed), num(p.summoner1Id), num(p.summoner2Id),
-        st[0] ? st[0].style : null, st[1] ? st[1].style : null, keystone,
+        styles[0]?.style ?? null, styles[1]?.style ?? null, keystone,
         num(p.item0), num(p.item1), num(p.item2), num(p.item3), num(p.item4), num(p.item5), num(p.item6),
       ]);
     }
 
     for (const team of info.teams) {
-      const o = team.objectives || {};
-      const k = (x) => (o[x] && typeof o[x].kills === 'number' ? o[x].kills : null);
+      const o = (team.objectives ?? {}) as unknown as Record<string, { kills?: number } | undefined>;
+      const k = (x: string): number | null =>
+        typeof o[x]?.kills === 'number' ? (o[x]!.kills as number) : null;
       insTeam.run([
         mid, team.teamId, team.win ? 1 : 0,
         k('baron'), k('dragon'), k('riftHerald'), k('horde'), k('atakhan'),
         k('tower'), k('inhibitor'), k('champion'),
       ]);
-      for (const b of team.bans || []) {
+      for (const b of team.bans ?? []) {
         if (b.championId < 0) continue;
         insBan.run([mid, team.teamId, b.championId, map.get(b.championId) ?? null, b.pickTurn]);
       }
@@ -198,18 +213,8 @@ async function main() {
   db.run(INDEXES);
   db.run(VIEWS);
 
-  const outPath = path.resolve('data', region, 'lol.db');
+  const outPath = path.join(dataDir, region, 'lol.db');
   fs.writeFileSync(outPath, Buffer.from(db.export()));
   db.close();
-
-  const sizeMB = (fs.statSync(outPath).size / 1e6).toFixed(1);
-  console.log(`SQLite generado: ${outPath} (${sizeMB} MB)`);
-  console.log(`Data Dragon ${v} · ${matches} partidas cargadas.`);
-  console.log('Tablas: matches, participants, bans, team_objectives');
-  console.log('Vistas: v_champion_stats, v_meta');
+  return { matches, outPath };
 }
-
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});

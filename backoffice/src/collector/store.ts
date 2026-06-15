@@ -18,6 +18,7 @@ export class Store {
   readonly matchesFile: string;
   readonly seenMatchesFile: string;
   readonly seenPlayersFile: string;
+  readonly tierFile: string;
 
   constructor(region: string) {
     this.dir = path.resolve(process.cwd(), DATA_DIR, region);
@@ -25,6 +26,7 @@ export class Store {
     this.matchesFile = path.join(this.dir, 'matches.jsonl');
     this.seenMatchesFile = path.join(this.dir, 'seen-matches.txt');
     this.seenPlayersFile = path.join(this.dir, 'seen-players.txt');
+    this.tierFile = path.join(this.dir, 'match-tier.tsv');
   }
 
   private loadSet(file: string): Set<string> {
@@ -54,6 +56,24 @@ export class Store {
 
   markPlayerSeen(puuid: string): void {
     fs.appendFileSync(this.seenPlayersFile, puuid + '\n');
+  }
+
+  /** Registra el rango (tier) del jugador-semilla con el que se halló la partida. */
+  appendMatchTier(matchId: string, tier: string): void {
+    fs.appendFileSync(this.tierFile, `${matchId}\t${tier}\n`);
+  }
+
+  /** Cuenta partidas ya guardadas por rango (para repartir equitativamente al reanudar). */
+  loadTierCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    if (!fs.existsSync(this.tierFile)) return counts;
+    for (const line of fs.readFileSync(this.tierFile, 'utf8').split('\n')) {
+      const i = line.indexOf('\t');
+      if (i <= 0) continue;
+      const tier = line.slice(i + 1).trim();
+      if (tier) counts.set(tier, (counts.get(tier) ?? 0) + 1);
+    }
+    return counts;
   }
 
   /** Lectura en streaming del JSONL (para no cargar cientos de MB en memoria). */

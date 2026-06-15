@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoL · Back office de analítica</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Back office · estadísticas de campeones</h1>
+    <div class="meta" id="meta">—</div>
+  </header>
+
+  <main>
+    <!-- Recolección -->
+    <section class="card" id="collectCard">
+      <div class="card-head">
+        <h2>Recolección</h2>
+        <span class="status" id="collectStatus">—</span>
+      </div>
+      <div class="form-grid">
+        <label>Servidor
+          <select id="cServer"></select>
+        </label>
+        <label>API key de Riot
+          <input id="cKey" type="password" placeholder="RGAPI-..." autocomplete="off" />
+        </label>
+        <label>Máx. partidas (total)
+          <input id="cMax" type="number" min="1" value="500" />
+        </label>
+        <label>Máx. por jugador
+          <input id="cPerPlayer" type="number" min="1" max="100" value="15" />
+        </label>
+        <label>Jugadores por liga
+          <input id="cBucket" type="number" min="1" value="40" />
+        </label>
+        <button id="cRun" class="btn-primary">Recolectar</button>
+      </div>
+      <div class="tier-row">
+        <span class="tier-label">Rangos a recolectar</span>
+        <div class="tier-pills" id="cTiers"></div>
+        <span class="tier-hint">El total (máx. partidas) se reparte <b>equitativamente</b> entre los rangos elegidos.</span>
+      </div>
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-text" id="progressText"></div>
+      </div>
+      <p class="hint"><b>Reanudable:</b> si falla o se corta, vuelve a pulsar <b>Recolectar</b> y continúa donde quedó (no re-descarga lo ya guardado). La dev key de Riot caduca cada 24h; se guarda solo en este navegador.</p>
+    </section>
+
+    <!-- Filtros compartidos -->
+    <section class="filters">
+      <label>Región
+        <select id="fRegion"></select>
+      </label>
+      <label>Parche
+        <select id="fPatch"></select>
+      </label>
+      <label>Rango
+        <select id="fTier"></select>
+      </label>
+      <label>Campeón
+        <input id="fChampion" list="championList" placeholder="Todos" />
+        <datalist id="championList"></datalist>
+      </label>
+      <div class="pills" id="fRoles"></div>
+    </section>
+
+    <!-- Pestañas -->
+    <nav class="tabs" id="tabs">
+      <button class="tab on" data-page="champions">Campeones</button>
+      <button class="tab" data-page="items">Items</button>
+      <button class="tab" data-page="runes">Runas</button>
+      <button class="tab" data-page="spells">Hechizos</button>
+    </nav>
+
+    <!-- Página: Campeones -->
+    <div class="page" id="pageChampions">
+      <div class="subfilters">
+        <label>Buscar
+          <input id="fSearch" type="search" placeholder="Campeón…" />
+        </label>
+        <div class="slider">
+          <div class="slider-top"><span>Mín. juegos</span><b id="fMinGamesV">1</b></div>
+          <input id="fMinGames" type="range" min="1" max="50" value="1" />
+        </div>
+        <div class="slider">
+          <div class="slider-top"><span>WR mín. %</span><b id="fMinWRV">0</b></div>
+          <input id="fMinWR" type="range" min="0" max="60" value="0" />
+        </div>
+      </div>
+      <div class="summary" id="summary"></div>
+      <div class="table-host" id="tableHost"></div>
+    </div>
+
+    <!-- Página: Items -->
+    <div class="page" id="pageItems" hidden>
+      <div class="summary" id="itemsSummary"></div>
+      <div class="table-host" id="itemsHost"></div>
+    </div>
+
+    <!-- Página: Runas -->
+    <div class="page" id="pageRunes" hidden>
+      <div class="summary" id="runesSummary"></div>
+      <div class="table-host" id="runesHost"></div>
+    </div>
+
+    <!-- Página: Hechizos -->
+    <div class="page" id="pageSpells" hidden>
+      <div class="summary" id="spellsSummary"></div>
+      <div class="table-host" id="spellsHost"></div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
