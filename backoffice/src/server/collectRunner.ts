@@ -12,8 +12,14 @@ import type { CollectRequest, CollectStatus, CollectProgress } from './types';
  */
 export class CollectRunner {
   private running = new Set<string>();
+  private progress = new Map<string, CollectProgress>();
 
   constructor(private dataDir: string) {}
+
+  /** Guarda el último progreso (lo consume el cliente por polling de /api/status). */
+  private emit(p: CollectProgress): void {
+    this.progress.set(p.region, p);
+  }
 
   private statusFile(region: string): string {
     return path.join(this.dataDir, region, 'collect-status.json');
@@ -58,25 +64,24 @@ export class CollectRunner {
       lastError: s.lastError,
       totalMatches: this.countMatches(region),
       running: this.running.has(region),
+      progress: this.progress.get(region) ?? null,
     };
   }
 
-  async run(
-    req: CollectRequest,
-    onProgress: (p: CollectProgress) => void,
-  ): Promise<CollectStatus> {
+  /** Lanza la recolección en segundo plano (no se ata a la petición HTTP). */
+  async run(req: CollectRequest): Promise<CollectStatus> {
     const { region } = req;
     if (this.running.has(region)) return this.status(region);
     if (!req.apiKey?.trim()) {
       const prev = this.readStatusFile(region);
       this.writeStatusFile(region, { ...prev, lastError: 'Falta la API key de Riot.' });
-      onProgress({ phase: 'error', region, collected: this.countMatches(region), target: req.maxMatches, message: 'Falta la API key de Riot.' });
+      this.emit({ phase: 'error', region, collected: this.countMatches(region), target: req.maxMatches, message: 'Falta la API key de Riot.' });
       return this.status(region);
     }
 
     this.running.add(region);
     const before = this.countMatches(region);
-    onProgress({ phase: 'starting', region, collected: before, target: req.maxMatches });
+    this.emit({ phase: 'starting', region, collected: before, target: req.maxMatches });
 
     let error: string | null = null;
     try {
@@ -88,7 +93,7 @@ export class CollectRunner {
         maxPlayersPerBucket: Math.max(1, req.maxPlayersPerBucket ?? 40),
         tiers: req.tiers,
         onProgress: (p) =>
-          onProgress({ phase: 'collecting', region, collected: p.collected, target: p.target, bucket: p.bucket }),
+          this.emit({ phase: 'collecting', region, collected: p.collected, target: p.target, bucket: p.bucket }),
       });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -100,7 +105,7 @@ export class CollectRunner {
     const after = this.countMatches(region);
     const dbExists = fs.existsSync(path.join(this.dataDir, region, 'lol.db'));
     if (after > 0 && (after > before || !dbExists)) {
-      onProgress({ phase: 'building-db', region, collected: after, target: req.maxMatches });
+      this.emit({ phase: 'building-db', region, collected: after, target: req.maxMatches });
       try {
         await buildDb(region, this.dataDir);
       } catch (err) {
@@ -111,10 +116,10 @@ export class CollectRunner {
     if (error) {
       const prev = this.readStatusFile(region);
       this.writeStatusFile(region, { lastCollectedAt: prev.lastCollectedAt, lastError: error });
-      onProgress({ phase: 'error', region, collected: after, target: req.maxMatches, message: error });
+      this.emit({ phase: 'error', region, collected: after, target: req.maxMatches, message: error });
     } else {
       this.writeStatusFile(region, { lastCollectedAt: Date.now(), lastError: null });
-      onProgress({ phase: 'done', region, collected: after, target: req.maxMatches });
+      this.emit({ phase: 'done', region, collected: after, target: req.maxMatches });
     }
     this.running.delete(region);
     return this.status(region);

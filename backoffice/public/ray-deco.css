@@ -1,0 +1,138 @@
+/* ============================================================
+   RAY DECO — experimento de decoración con ray.svg
+   5 ubicaciones candidatas + card flotante para elegir una.
+   TODO esto es desechable: al elegir, se borran ray-deco.css,
+   ray-deco.js y las 2 líneas que los cargan en index.html.
+   ============================================================ */
+
+/* Contenedores que alojan un rayo: necesitan contexto de posición */
+.sidebar { position: relative; }
+.brand   { position: relative; }
+.filters { position: relative; }
+
+.ray-deco {
+  pointer-events: none;
+  user-select: none;
+  position: absolute;
+  z-index: 0;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+.ray-deco[hidden] { display: none; }
+
+/* 1 · Marca de agua grande en el sidebar (esquina inferior) */
+.ray-1 {
+  bottom: 12px;
+  right: -18px;
+  width: 120px;
+  opacity: 0.10;
+  transform: rotate(-8deg);
+}
+
+/* 2 · Acento pequeño junto al logo (arriba a la derecha de la marca) */
+.ray-2 {
+  top: 2px;
+  right: 2px;
+  width: 26px;
+  opacity: 0.85;
+  filter: drop-shadow(0 0 4px color-mix(in oklab, #50CBDA 60%, transparent));
+}
+
+/* 3 · Acento en la barra superior, antes del texto meta */
+.ray-3 {
+  top: 50%;
+  left: 14px;
+  width: 18px;
+  transform: translateY(-50%);
+  opacity: 0.9;
+}
+
+/* 4 · Decoración a la derecha de la barra de filtros */
+.ray-4 {
+  top: 50%;
+  right: 4px;
+  width: 40px;
+  transform: translateY(-50%) rotate(12deg);
+  opacity: 0.22;
+}
+
+/* 5 · Marca de agua gigante fija al fondo de la página (viewport) */
+.ray-5 {
+  position: fixed;
+  bottom: -40px;
+  right: -30px;
+  width: 360px;
+  opacity: 0.05;
+  transform: rotate(6deg);
+  z-index: 0;
+}
+
+/* Resaltado al pasar el cursor por una opción del card */
+@keyframes rayFlash {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 10px #50CBDA) drop-shadow(0 0 4px #50CBDA); }
+}
+.ray-deco.flash {
+  animation: rayFlash 0.7s ease-in-out 2;
+  opacity: 1 !important;
+}
+
+/* ---- Card flotante de elección ---- */
+.ray-picker {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  width: 248px;
+  background: var(--panel, #151b26);
+  border: 1px solid var(--border, #2a3245);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  font: 13px/1.4 system-ui, "Segoe UI", Roboto, sans-serif;
+  color: var(--text, #e6e6e6);
+  overflow: hidden;
+}
+.ray-picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #2a3245);
+}
+.ray-picker-head img { width: 16px; height: auto; }
+.ray-picker-head b { font-size: 13px; }
+.ray-picker-head .sub { color: var(--muted, #8a94a6); font-size: 11px; margin-left: auto; }
+.ray-picker-list { display: flex; flex-direction: column; padding: 6px; gap: 2px; }
+.ray-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.ray-opt:hover { background: var(--panel-2, #1b2230); border-color: var(--border, #2a3245); }
+.ray-opt .n {
+  flex: 0 0 auto;
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in oklab, #50CBDA 22%, transparent);
+  color: #8fe3ee;
+  font-size: 11px; font-weight: 700;
+}
+.ray-opt .lbl { flex: 1 1 auto; }
+.ray-opt .eye {
+  flex: 0 0 auto;
+  color: var(--muted, #8a94a6);
+  font-size: 13px;
+  opacity: 0.8;
+}
+.ray-opt.off { opacity: 0.45; }
+.ray-opt.off .lbl { text-decoration: line-through; }
+.ray-picker-foot {
+  padding: 8px 12px 10px;
+  color: var(--muted, #8a94a6);
+  font-size: 11px;
+  border-top: 1px solid var(--border, #2a3245);
+}

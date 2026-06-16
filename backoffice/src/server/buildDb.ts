@@ -31,6 +31,7 @@ CREATE TABLE participants (
   time_played INTEGER, summoner1_id INTEGER, summoner2_id INTEGER,
   primary_style INTEGER, sub_style INTEGER, keystone INTEGER,
   item0 INTEGER, item1 INTEGER, item2 INTEGER, item3 INTEGER, item4 INTEGER, item5 INTEGER, item6 INTEGER,
+  riot_id TEXT,
   PRIMARY KEY (match_id, participant_id)
 );
 CREATE TABLE bans (
@@ -130,7 +131,7 @@ export async function buildDb(
 
   const insMatch = db.prepare('INSERT OR IGNORE INTO matches VALUES (?,?,?,?,?,?,?,?,?,?)');
   const insPart = db.prepare(
-    `INSERT OR IGNORE INTO participants VALUES (${Array(53).fill('?').join(',')})`,
+    `INSERT OR IGNORE INTO participants VALUES (${Array(54).fill('?').join(',')})`,
   );
   const insBan = db.prepare('INSERT INTO bans VALUES (?,?,?,?,?)');
   const insTeam = db.prepare(
@@ -168,6 +169,11 @@ export async function buildDb(
         ((p.perks as { styles?: Array<{ style: number; selections?: Array<{ perk: number }> }> })
           ?.styles) ?? [];
       const keystone = styles[0]?.selections?.[0]?.perk ?? null;
+      const gameName = typeof p.riotIdGameName === 'string' ? p.riotIdGameName : '';
+      const tagline = typeof p.riotIdTagline === 'string' ? p.riotIdTagline : '';
+      const riotId = gameName
+        ? (tagline ? `${gameName}#${tagline}` : gameName)
+        : (typeof p.summonerName === 'string' && p.summonerName ? p.summonerName : null);
       insPart.run([
         mid, p.participantId, p.puuid, p.teamId,
         p.championId, p.championName, p.teamPosition, p.win ? 1 : 0,
@@ -185,6 +191,7 @@ export async function buildDb(
         num(p.timePlayed), num(p.summoner1Id), num(p.summoner2Id),
         styles[0]?.style ?? null, styles[1]?.style ?? null, keystone,
         num(p.item0), num(p.item1), num(p.item2), num(p.item3), num(p.item4), num(p.item5), num(p.item6),
+        riotId,
       ]);
     }
 

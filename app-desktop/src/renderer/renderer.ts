@@ -378,6 +378,49 @@ function pill(text: string, tone: 'role' | 'diff' | 'ghost'): HTMLElement {
   return el('span', `pill pill-${tone}`, text);
 }
 
+/* ---- Roles: asset oficial (CommunityDragon) + etiqueta + tooltip ---- */
+const CDRAGON_ROLE =
+  'https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-static-assets/global/default/svg';
+const ROLE_INFO: Record<string, { key: string; label: string; tip: string }> = {
+  TOP: { key: 'top', label: 'Top', tip: 'Top — Línea superior. Suelen jugar luchadores y tanques en duelos 1v1.' },
+  JUNGLE: { key: 'jungle', label: 'Jungla', tip: 'Jungla — Sin línea fija; controla la jungla, hace ganks y objetivos.' },
+  MIDDLE: { key: 'middle', label: 'Mid', tip: 'Mid — Línea central. Magos y asesinos de alto impacto.' },
+  BOTTOM: { key: 'bottom', label: 'ADC', tip: 'ADC — Línea inferior. Tirador de daño físico sostenido.' },
+  UTILITY: { key: 'utility', label: 'Support', tip: 'Support — Acompaña al ADC: protege, inicia y aporta visión.' },
+};
+function normalizeRole(pos?: string): keyof typeof ROLE_INFO | undefined {
+  switch ((pos ?? '').toUpperCase()) {
+    case 'TOP': return 'TOP';
+    case 'JUNGLE': return 'JUNGLE';
+    case 'MIDDLE': case 'MID': return 'MIDDLE';
+    case 'BOTTOM': case 'BOT': case 'ADC': return 'BOTTOM';
+    case 'UTILITY': case 'SUPPORT': return 'UTILITY';
+    default: return undefined;
+  }
+}
+/** Etiqueta legible del rol (o el texto crudo si no se reconoce). */
+function roleLabel(pos?: string): string {
+  const r = normalizeRole(pos);
+  return r ? ROLE_INFO[r].label : (pos ?? '');
+}
+/** Pill de rol con icono de posición y tooltip explicativo en hover. */
+function rolePill(pos?: string): HTMLElement {
+  const r = normalizeRole(pos);
+  const node = el('span', 'pill pill-role');
+  if (r) {
+    const info = ROLE_INFO[r];
+    const img = el('img', 'pill-ic');
+    img.src = `${CDRAGON_ROLE}/position-${info.key}.svg`;
+    img.alt = '';
+    img.onerror = () => img.remove();
+    node.append(img, document.createTextNode(info.label));
+    node.title = info.tip;
+  } else {
+    node.textContent = pos ?? '';
+  }
+  return node;
+}
+
 /** Sección con cabecera, colapsable opcional y badge "Próximamente". */
 function section(opts: {
   title: string; soon?: boolean; side?: string;
@@ -545,7 +588,7 @@ function champSelectPanel(state: AppState): HTMLElement {
   const meta = el('div', 'you-meta');
   meta.append(el('div', 'you-name', local?.championName ?? 'Sin bloquear'));
   const tags = el('div', 'you-tags');
-  if (local?.assignedPosition) tags.append(pill(local.assignedPosition, 'role'));
+  if (local?.assignedPosition) tags.append(rolePill(local.assignedPosition));
   tags.append(pill(local?.championId ? 'Bloqueado' : 'Eligiendo', 'ghost'));
   meta.append(tags);
   head.append(meta);
@@ -553,7 +596,7 @@ function champSelectPanel(state: AppState): HTMLElement {
 
   // picks sugeridos
   if (cs.suggestions.length) {
-    const { root, body: secBody } = section({ title: 'Picks sugeridos', side: local?.assignedPosition });
+    const { root, body: secBody } = section({ title: 'Picks sugeridos', side: roleLabel(local?.assignedPosition) });
     const ul = el('ul', 'picks');
     for (const s of cs.suggestions) {
       const li = el('li', 'pick');

@@ -8,6 +8,9 @@ import type { CollectRequest } from './types';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const PUBLIC_DIR = path.resolve(process.cwd(), 'public');
+// Carpeta de assets compartida en la raíz del repo (descargada con
+// scripts/download-assets.mjs). Se sirve bajo /assets/*.
+const ASSETS_DIR = path.resolve(process.cwd(), '..', 'assets');
 const PORT = Number(process.env.PORT) || 4317;
 
 const db = new StatsDb(DATA_DIR);
@@ -18,6 +21,12 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
 };
 
 function sendJson(res: http.ServerResponse, code: number, data: unknown): void {
@@ -29,14 +38,28 @@ function sendJson(res: http.ServerResponse, code: number, data: unknown): void {
 function serveStatic(req: http.IncomingMessage, res: http.ServerResponse): void {
   let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
-  const file = path.join(PUBLIC_DIR, path.normalize(urlPath));
-  if (!file.startsWith(PUBLIC_DIR)) {
+
+  // Los assets compartidos viven fuera de public/, en la raíz del repo.
+  const isAsset = urlPath.startsWith('/assets/');
+  const baseDir = isAsset ? ASSETS_DIR : PUBLIC_DIR;
+  const rel = isAsset ? urlPath.slice('/assets'.length) : urlPath;
+  const file = path.join(baseDir, path.normalize(rel));
+  if (!file.startsWith(baseDir)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
   }
   fs.readFile(file, (err, buf) => {
     if (err) {
+      // Rutas sin extensión (p.ej. /champ/jhin) -> SPA: servir index.html.
+      if (!path.extname(file)) {
+        fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, b2) => {
+          if (e2) { res.writeHead(404); res.end('Not found'); return; }
+          res.writeHead(200, { 'Content-Type': MIME['.html'] });
+          res.end(b2);
+        });
+        return;
+      }
       res.writeHead(404);
       res.end('Not found');
       return;
@@ -82,7 +105,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (
-      (p === '/api/items' || p === '/api/runes' || p === '/api/spells') &&
+      ['/api/items', '/api/runes', '/api/spells', '/api/players', '/api/counters', '/api/synergy'].includes(p) &&
       req.method === 'GET'
     ) {
       const region = url.searchParams.get('region');
@@ -96,8 +119,37 @@ const server = http.createServer(async (req, res) => {
       const data =
         p === '/api/items' ? await db.itemStats(region, f)
         : p === '/api/runes' ? await db.runeStats(region, f)
-        : await db.spellStats(region, f);
+        : p === '/api/spells' ? await db.spellStats(region, f)
+        : p === '/api/players' ? await db.playerStats(region, f)
+        : p === '/api/synergy' ? await db.synergyStats(region, f)
+        : await db.counterStats(region, f);
       sendJson(res, 200, data);
+      return;
+    }
+    if (p === '/api/item-games' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      const item = Number(url.searchParams.get('item'));
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      if (!Number.isFinite(item) || item <= 0) return sendJson(res, 400, { error: 'item inválido' });
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        role: url.searchParams.get('role') || 'ALL',
+        champion: url.searchParams.get('champion') || 'all',
+      };
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+      sendJson(res, 200, await db.itemGames(region, item, f, limit, offset));
+      return;
+    }
+    if (p === '/api/match' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      const matchId = url.searchParams.get('matchId');
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      if (!matchId) return sendJson(res, 400, { error: 'falta matchId' });
+      const detail = await db.matchDetail(region, matchId);
+      if (!detail) return sendJson(res, 404, { error: 'partida no encontrada' });
+      sendJson(res, 200, detail);
       return;
     }
     if (p === '/api/status' && req.method === 'GET') {
@@ -114,12 +166,12 @@ const server = http.createServer(async (req, res) => {
       } catch {
         return sendJson(res, 400, { error: 'JSON inválido' });
       }
-      // Progreso en streaming (NDJSON): una línea JSON por evento.
-      res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-cache' });
-      const status = await runner.run(request, (prog) => res.write(JSON.stringify(prog) + '\n'));
-      db.reload(request.region); // base reconstruida: refresca la cache
-      res.write(JSON.stringify({ phase: 'status', ...status }) + '\n');
-      res.end();
+      if (runner.isRunning(request.region)) return sendJson(res, 202, { running: true });
+      // Se lanza en segundo plano y se responde al instante: la recolección NO
+      // queda atada a la petición HTTP (puede durar horas). El cliente sigue el
+      // progreso por polling a /api/status. Al terminar, refresca la cache de la base.
+      void runner.run(request).then(() => db.reload(request.region)).catch(() => {});
+      sendJson(res, 202, { started: true });
       return;
     }
     if (p.startsWith('/api/')) return sendJson(res, 404, { error: 'no encontrado' });

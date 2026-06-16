@@ -11,7 +11,8 @@
     "collect": "npm run build && node dist/collector/index.js collect",
     "aggregate": "npm run build && node dist/collector/index.js aggregate",
     "gen-types": "node scripts/gen-riot-types.mjs",
-    "report": "node scripts/build-report.mjs"
+    "report": "node scripts/build-report.mjs",
+    "assets": "node ../scripts/download-assets.mjs"
   },
   "dependencies": {
     "sql.js": "^1.14.1"

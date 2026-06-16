@@ -4,53 +4,34 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LoL · Back office de analítica</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/ray-deco.css" /><!-- RAY DECO (experimento, quitar al elegir) -->
 </head>
 <body>
-  <header class="topbar">
-    <h1>Back office · estadísticas de campeones</h1>
-    <div class="meta" id="meta">—</div>
-  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="/" title="HERO LOL COACH">
+        <img class="brand-logo" src="/assets/hero-logo-square.svg" alt="HERO LOL COACH"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+        <span class="brand-text" style="display:none">HERO<br>LOL COACH</span>
+      </a>
+      <nav class="tabs" id="tabs">
+        <button class="tab on" data-page="champions">Campeones</button>
+        <button class="tab" data-page="items">Items</button>
+        <button class="tab" data-page="runes">Runas</button>
+        <button class="tab" data-page="spells">Hechizos</button>
+        <button class="tab tab-collect" data-page="collect">⬇ Recolección</button>
+      </nav>
+    </aside>
 
-  <main>
-    <!-- Recolección -->
-    <section class="card" id="collectCard">
-      <div class="card-head">
-        <h2>Recolección</h2>
-        <span class="status" id="collectStatus">—</span>
-      </div>
-      <div class="form-grid">
-        <label>Servidor
-          <select id="cServer"></select>
-        </label>
-        <label>API key de Riot
-          <input id="cKey" type="password" placeholder="RGAPI-..." autocomplete="off" />
-        </label>
-        <label>Máx. partidas (total)
-          <input id="cMax" type="number" min="1" value="500" />
-        </label>
-        <label>Máx. por jugador
-          <input id="cPerPlayer" type="number" min="1" max="100" value="15" />
-        </label>
-        <label>Jugadores por liga
-          <input id="cBucket" type="number" min="1" value="40" />
-        </label>
-        <button id="cRun" class="btn-primary">Recolectar</button>
-      </div>
-      <div class="tier-row">
-        <span class="tier-label">Rangos a recolectar</span>
-        <div class="tier-pills" id="cTiers"></div>
-        <span class="tier-hint">El total (máx. partidas) se reparte <b>equitativamente</b> entre los rangos elegidos.</span>
-      </div>
-      <div class="progress-wrap" id="progressWrap" hidden>
-        <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
-        <div class="progress-text" id="progressText"></div>
-      </div>
-      <p class="hint"><b>Reanudable:</b> si falla o se corta, vuelve a pulsar <b>Recolectar</b> y continúa donde quedó (no re-descarga lo ya guardado). La dev key de Riot caduca cada 24h; se guarda solo en este navegador.</p>
-    </section>
+    <div class="content">
+      <header class="topbar">
+        <div class="meta" id="meta">—</div>
+      </header>
 
+      <main>
     <!-- Filtros compartidos -->
-    <section class="filters">
+    <section class="filters" id="filters">
       <label>Región
         <select id="fRegion"></select>
       </label>
@@ -58,7 +39,7 @@
         <select id="fPatch"></select>
       </label>
       <label>Rango
-        <select id="fTier"></select>
+        <div class="tier-filter" id="fTier"></div>
       </label>
       <label>Campeón
         <input id="fChampion" list="championList" placeholder="Todos" />
@@ -66,14 +47,6 @@
       </label>
       <div class="pills" id="fRoles"></div>
     </section>
-
-    <!-- Pestañas -->
-    <nav class="tabs" id="tabs">
-      <button class="tab on" data-page="champions">Campeones</button>
-      <button class="tab" data-page="items">Items</button>
-      <button class="tab" data-page="runes">Runas</button>
-      <button class="tab" data-page="spells">Hechizos</button>
-    </nav>
 
     <!-- Página: Campeones -->
     <div class="page" id="pageChampions">
@@ -111,8 +84,90 @@
       <div class="summary" id="spellsSummary"></div>
       <div class="table-host" id="spellsHost"></div>
     </div>
-  </main>
 
-  <script src="app.js"></script>
+    <!-- Página: Recolección -->
+    <div class="page" id="pageCollect" hidden>
+      <section class="card" id="collectCard">
+        <div class="card-head">
+          <h2>Recolección</h2>
+          <span class="status" id="collectStatus">—</span>
+        </div>
+        <div class="form-grid">
+          <label>Servidor
+            <select id="cServer"></select>
+          </label>
+          <label>API key de Riot
+            <input id="cKey" type="password" placeholder="RGAPI-..." autocomplete="off" />
+          </label>
+          <label>Máx. partidas (total)
+            <input id="cMax" type="number" min="1" value="500" />
+          </label>
+          <label>Máx. por jugador
+            <input id="cPerPlayer" type="number" min="1" max="100" value="15" />
+          </label>
+          <label>Jugadores por liga
+            <input id="cBucket" type="number" min="1" value="40" />
+          </label>
+          <button id="cRun" class="btn-primary">Recolectar</button>
+        </div>
+        <div class="tier-row">
+          <span class="tier-label">Rangos a recolectar</span>
+          <div class="tier-pills" id="cTiers"></div>
+          <span class="tier-hint">El total (máx. partidas) se reparte <b>equitativamente</b> entre los rangos elegidos.</span>
+        </div>
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-text" id="progressText"></div>
+        </div>
+        <p class="hint"><b>Reanudable:</b> si falla o se corta, vuelve a pulsar <b>Recolectar</b> y continúa donde quedó (no re-descarga lo ya guardado). La dev key de Riot caduca cada 24h; se guarda solo en este navegador.</p>
+      </section>
+    </div>
+
+    <!-- Ficha de campeón (cuando hay uno seleccionado) -->
+    <section id="championView" hidden>
+      <div class="cv-header" id="cvHeader"></div>
+      <div class="cv-matchups">
+        <div class="mu-card">
+          <div class="mu-head"><h3>Weak against</h3><span class="arrow">→</span></div>
+          <div class="mu-grid" id="cvWeak"></div>
+        </div>
+        <div class="mu-card">
+          <div class="mu-head"><h3>Strong against</h3><span class="arrow">→</span></div>
+          <div class="mu-grid" id="cvStrong"></div>
+        </div>
+        <div class="mu-card">
+          <div class="mu-head"><h3>Best synergy (duo)</h3><span class="arrow">→</span></div>
+          <div class="mu-grid" id="cvSynergy"></div>
+        </div>
+      </div>
+      <div class="cv-grid">
+        <div class="cv-card">
+          <h3>Items frecuentes</h3>
+          <div class="cv-build" id="cvBuild"></div>
+          <div id="cvItems"></div>
+        </div>
+        <div class="cv-card">
+          <h3>Jugadores</h3>
+          <div id="cvPlayers"></div>
+        </div>
+        <div class="cv-card">
+          <h3>Runas</h3>
+          <div id="cvRunes"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Detalle de ítem: partidas en las que se usó (cuando hay /item/<id>) -->
+    <section id="itemView" hidden>
+      <div class="cv-header" id="ivHeader"></div>
+      <div class="table-host" id="ivGamesHost"></div>
+      <div class="iv-pager" id="ivPager"></div>
+    </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script defer src="/ray-deco.js"></script><!-- RAY DECO (experimento, quitar al elegir) -->
 </body>
 </html>

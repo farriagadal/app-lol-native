@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .cache/
 .claude/settings.local.json
+
+# Assets compartidos descargados (ver scripts/download-assets.mjs)
+assets/

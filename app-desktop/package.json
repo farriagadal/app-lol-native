@@ -14,7 +14,8 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "watch:main": "tsc -p tsconfig.main.json --watch",
-    "watch:renderer": "tsc -p tsconfig.renderer.json --watch"
+    "watch:renderer": "tsc -p tsconfig.renderer.json --watch",
+    "assets": "node ../scripts/download-assets.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

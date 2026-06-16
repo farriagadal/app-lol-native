@@ -120,7 +120,13 @@ app.whenReady().then(async () => {
   });
 
   try {
-    await overlay.start(path.join(app.getPath('userData'), 'ddragon'));
+    // En desarrollo usamos la carpeta de assets compartida del repo
+    // (assets/cdn, poblada por scripts/download-assets.mjs) para no descargar
+    // por separado; empaquetada cae a userData.
+    const assetsDir = app.isPackaged
+      ? path.join(app.getPath('userData'), 'ddragon')
+      : path.join(path.dirname(app.getAppPath()), 'assets', 'cdn');
+    await overlay.start(assetsDir);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     win?.webContents.send('state', {

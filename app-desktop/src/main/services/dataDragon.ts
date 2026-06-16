@@ -80,14 +80,20 @@ export class DataDragon {
   private get metaFile(): string {
     return path.join(this.cacheDir, 'installed.json');
   }
+  /** Manifiesto de la carpeta compartida (assets/manifest.json, junto a cdn/). */
+  private get sharedManifestFile(): string {
+    return path.join(path.dirname(this.cacheDir), 'manifest.json');
+  }
   private verDir(v: string): string {
     return path.join(this.cacheDir, v);
   }
+  // JSON con el layout de Data Dragon (data/<locale>/…), igual que descarga
+  // scripts/download-assets.mjs, para compartir la carpeta con el back office.
   private champJsonFile(v: string): string {
-    return path.join(this.verDir(v), `champions-${this.locale}.json`);
+    return path.join(this.verDir(v), 'data', this.locale, 'champion.json');
   }
   private itemJsonFile(v: string): string {
-    return path.join(this.verDir(v), `items-${this.locale}.json`);
+    return path.join(this.verDir(v), 'data', this.locale, 'item.json');
   }
   private champIconFile(v: string, id: string): string {
     return path.join(this.verDir(v), 'img', 'champion', `${id}.png`);
@@ -124,6 +130,13 @@ export class DataDragon {
   }
 
   private async readMeta(): Promise<string | null> {
+    // 1) Carpeta compartida poblada por el script (assets/manifest.json).
+    try {
+      const raw = await fsp.readFile(this.sharedManifestFile, 'utf8');
+      const man = JSON.parse(raw) as { version?: string };
+      if (man.version) return man.version;
+    } catch { /* sin manifest compartido */ }
+    // 2) Descarga propia previa de la app (installed.json).
     try {
       const raw = await fsp.readFile(this.metaFile, 'utf8');
       const meta = JSON.parse(raw) as { version?: string };
@@ -185,7 +198,7 @@ export class DataDragon {
    * persiste el puntero. Tras esto los lookups y las URL (remotas) funcionan.
    */
   private async ensureData(v: string, emit?: ProgressFn): Promise<void> {
-    await fsp.mkdir(this.verDir(v), { recursive: true });
+    await fsp.mkdir(path.join(this.verDir(v), 'data', this.locale), { recursive: true });
     await fsp.mkdir(path.join(this.verDir(v), 'img', 'champion'), { recursive: true });
     await fsp.mkdir(path.join(this.verDir(v), 'img', 'item'), { recursive: true });
 

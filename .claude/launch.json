@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backoffice",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.chdir('backoffice');require(process.cwd()+'/dist/server/server.js')"],
+      "port": 4317
+    }
+  ]
+}

@@ -56,6 +56,106 @@ export interface RuneStatRow {
   pickRate: number;
 }
 
+export interface PlayerStatRow {
+  riotId: string | null;
+  games: number;
+  wins: number;
+  winRate: number;
+  kda: number;
+}
+
+export interface CounterStatRow {
+  opponent: string; // id de Data Dragon del campeón rival
+  games: number;
+  wins: number;
+  winRate: number;  // win rate del campeón propio contra ese rival
+  pickRate: number; // % de enfrentamientos contra ese rival
+}
+
+export interface SynergyStatRow {
+  champion: string; // id de Data Dragon del compañero de equipo
+  games: number;
+  wins: number;
+  winRate: number;  // win rate jugando junto a ese compañero
+  pickRate: number;
+}
+
+/** Una partida concreta en la que un participante llevó cierto ítem (resumen). */
+export interface ItemGameRow {
+  matchId: string;
+  championName: string;
+  role: string;           // team_position
+  win: boolean;
+  kills: number;
+  deaths: number;
+  assists: number;
+  kda: number;
+  cs: number;
+  gameDuration: number;   // segundos
+  gameCreation: number;   // epoch ms
+  tier: string | null;    // rango de la partida (no por jugador)
+  items: number[];        // [item0..item6]; item6 = trinket
+  keystone: number | null;
+  primaryStyle: number | null;
+  subStyle: number | null;
+  summoner1: number | null;
+  summoner2: number | null;
+  killParticipation: number | null;
+}
+
+export interface ItemGamesResponse {
+  total: number;          // total de partidas que pasan el filtro (para el paginador)
+  games: ItemGameRow[];
+}
+
+/** Un jugador dentro del scoreboard de una partida concreta. */
+export interface MatchParticipantRow {
+  teamId: number;
+  participantId: number;
+  championName: string;
+  role: string;
+  riotId: string | null;
+  win: boolean;
+  champLevel: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  kda: number;
+  cs: number;
+  killParticipation: number | null;
+  dmgToChamps: number;
+  goldEarned: number;
+  items: number[];        // [item0..item6]
+  summoner1: number | null;
+  summoner2: number | null;
+  keystone: number | null;
+  primaryStyle: number | null;
+  subStyle: number | null;
+}
+
+export interface MatchTeamObjectives {
+  teamId: number;
+  win: boolean;
+  baronKills: number;
+  dragonKills: number;
+  riftHeraldKills: number;
+  towerKills: number;
+  inhibitorKills: number;
+  championKills: number;
+}
+
+/** Detalle completo de una partida (scoreboard de 10 jugadores). */
+export interface MatchDetail {
+  matchId: string;
+  patch: string;
+  gameDuration: number;
+  gameCreation: number;
+  winningTeam: number | null;
+  tier: string | null;
+  participants: MatchParticipantRow[];
+  teams: MatchTeamObjectives[];
+}
+
 export interface CollectRequest {
   region: string;
   apiKey: string;
@@ -80,4 +180,5 @@ export interface CollectStatus {
   lastError: string | null;
   totalMatches: number;
   running: boolean;
+  progress: CollectProgress | null; // último evento de progreso (para polling)
 }

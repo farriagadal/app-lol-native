@@ -341,6 +341,12 @@ body.dragging * {
   color: var(--accent2);
   border: 1px solid color-mix(in oklab, var(--accent2) 30%, transparent);
 }
+.pill-ic {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  display: block;
+}
 .pill-diff {
   background: var(--panel-2);
   color: var(--muted);
