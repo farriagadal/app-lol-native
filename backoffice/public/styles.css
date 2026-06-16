@@ -325,3 +325,11 @@ td.role-cell { vertical-align: middle; }
 .sb-build .build-row img, .sb-build .build-row .item-empty { width: 18px; height: 18px; }
 
 @media (max-width: 900px) { .scoreboard { grid-template-columns: 1fr; } }
+
+/* ---- Detalle decorativo con ray.svg ---- */
+.ray-deco { pointer-events: none; user-select: none; position: absolute; z-index: 0; }
+/* Acento en la barra superior, antes del texto meta */
+.topbar { padding-left: 40px; }
+.ray-top { top: 50%; left: 14px; width: 18px; transform: translateY(-50%); opacity: 0.9; }
+/* Marca de agua de fondo, fija al viewport (esquina inferior derecha) */
+.ray-bg { position: fixed; bottom: -40px; right: -30px; width: 360px; opacity: 0.1; transform: rotate(6deg); z-index: 0; }
