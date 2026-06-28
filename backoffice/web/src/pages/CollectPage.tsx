@@ -4,12 +4,19 @@
  * en el servidor con independencia de esta página. Si se eligen varios
  * servidores, se ejecutan secuencialmente.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import { ProgressBar, TierPills, TIERS, type CollectProgress, type CollectStatus } from '@ui';
 import { api } from '../api';
 import { LS, useStore } from '../state/store';
 
 const ALL_TIERS = TIERS.map((t) => t[0]);
+
+interface RegionSummary {
+  region: string;
+  totalGames: number;
+  totalParticipants: number;
+  patches: string[];
+}
 
 interface BaseReq {
   apiKey: string;
@@ -19,6 +26,100 @@ interface BaseReq {
   tiers: string[];
   startTime?: number;
   endTime?: number;
+}
+
+function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onCollected: () => void }) {
+  const s = useStore();
+  const [riotId, setRiotId] = useState('');
+  const [limit, setLimit] = useState('20');
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string>('');
+  const [statusClass, setStatusClass] = useState('status');
+  const pollRef = useRef<number | null>(null);
+
+  const stopPoll = () => { if (pollRef.current) { window.clearTimeout(pollRef.current); pollRef.current = null; } };
+
+  const poll = useCallback(() => {
+    api.collectPlayerStatus().then((st: { phase: string; riotId?: string; downloaded?: number; skipped?: number; total?: number; error?: string }) => {
+      const phases: Record<string, string> = {
+        idle: '—',
+        resolving: 'Resolviendo Riot ID…',
+        'fetching-ids': 'Obteniendo historial de partidas…',
+        downloading: `Descargando ${st.downloaded ?? 0}/${st.total ?? 0} partidas (${st.skipped ?? 0} ya guardadas)…`,
+        'building-db': 'Reconstruyendo base de datos…',
+        done: `✓ Listo: ${st.downloaded ?? 0} partidas nuevas, ${st.skipped ?? 0} ya existían.`,
+        error: `⚠ Error: ${st.error ?? ''}`,
+      };
+      const text = phases[st.phase] ?? st.phase;
+      setStatus(text);
+      setStatusClass(st.phase === 'error' ? 'status err' : st.phase === 'done' ? 'status ok' : 'status');
+      if (st.phase === 'done' || st.phase === 'error') {
+        setBusy(false);
+        void s.reloadRegions().then(onCollected);
+      } else if (st.phase !== 'idle') {
+        pollRef.current = window.setTimeout(poll, 1500);
+      }
+    }).catch(() => {
+      pollRef.current = window.setTimeout(poll, 2000);
+    });
+  }, [s, onCollected]);
+
+  useEffect(() => () => stopPoll(), []);
+
+  const run = async () => {
+    const id = riotId.trim();
+    if (!id.includes('#')) { alert('Ingresa el Riot ID con formato NombreJugador#TAG'); return; }
+    if (!apiKey) { alert('Falta la API key de Riot (ingresala en la sección de arriba).'); return; }
+    const singleRegion = s.region && s.region !== 'all' && !s.region.includes(',') ? s.region : null;
+    if (!singleRegion) { alert('Selecciona un servidor específico (solo uno) en el filtro Servidor para recolectar partidas de un jugador.'); return; }
+    stopPoll();
+    setBusy(true);
+    setStatus('Iniciando…');
+    setStatusClass('status');
+    try {
+      const res = await api.collectPlayer({ region: singleRegion, apiKey, riotId: id, limit: Number(limit) || 20 });
+      if (!res.ok && res.status !== 202) {
+        const j = await res.json() as { error?: string };
+        throw new Error(j.error ?? `HTTP ${res.status}`);
+      }
+      pollRef.current = window.setTimeout(poll, 800);
+    } catch (err) {
+      setStatus('⚠ ' + (err instanceof Error ? err.message : String(err)));
+      setStatusClass('status err');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card" style={{ marginTop: 16 }}>
+      <div className="card-head">
+        <h2>Recolectar jugador</h2>
+        {status && <span className={statusClass}>{status}</span>}
+      </div>
+      <div className="form-grid">
+        <label>
+          Riot ID
+          <input
+            type="text"
+            placeholder="NombreJugador#TAG"
+            value={riotId}
+            onChange={(e) => setRiotId(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void run(); }}
+          />
+        </label>
+        <label>
+          Últimas N partidas
+          <input type="number" min={1} max={200} value={limit} onChange={(e) => setLimit(e.target.value)} />
+        </label>
+        <button className="btn-primary" disabled={busy} onClick={run}>
+          {busy ? 'Descargando…' : 'Descargar partidas'}
+        </button>
+      </div>
+      <p className="hint">
+        Descarga las últimas partidas ranked del jugador directamente desde la API de Riot y las agrega a la base de datos local. Solo trae partidas que no estén ya guardadas.
+      </p>
+    </section>
+  );
 }
 
 export function CollectPage() {
@@ -41,6 +142,12 @@ export function CollectPage() {
   const [statusClass, setStatusClass] = useState('status');
   const [progress, setProgress] = useState<{ frac: number; text: string } | null>(null);
   const pollTimer = useRef<number | null>(null);
+
+  const [history, setHistory] = useState<RegionSummary[]>([]);
+  const loadHistory = useCallback(() => {
+    api.collectHistory().then(setHistory).catch(() => {});
+  }, []);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const showStatus = useCallback((st: CollectStatus) => {
     if (st.running) {
@@ -91,6 +198,7 @@ export function CollectPage() {
       }
       // Este servidor terminó: refrescar catálogos.
       await s.reloadRegions();
+      loadHistory();
       s.setRegion(region);
       const next = idx + 1;
       if (next < queue.length) {
@@ -109,7 +217,7 @@ export function CollectPage() {
         setCollecting(false);
       }
     },
-    [onProgress, showStatus, s],
+    [onProgress, showStatus, s, loadHistory],
   );
 
   // Estado inicial del primer servidor seleccionado; reanuda si hay algo en curso.
@@ -278,6 +386,24 @@ export function CollectPage() {
           re-descarga lo ya guardado). La dev key de Riot caduca cada 24h; se guarda solo en este navegador.
         </p>
       </section>
+      <PlayerCollectSection apiKey={apiKey} onCollected={loadHistory} />
+      {history.length > 0 && (
+        <section className="card">
+          <div className="card-head">
+            <h2>Historial de recolecciones</h2>
+          </div>
+          <div className="collect-hist">
+            {history.map((h) => (
+              <div key={h.region} className="hist-row">
+                <b className="hist-region">{h.region.toUpperCase()}</b>
+                <span className="hist-stat">{h.totalGames.toLocaleString()} partidas</span>
+                <span className="hist-stat">{h.totalParticipants.toLocaleString()} jugadores</span>
+                <span className="hist-patches">parches: {h.patches.join(', ') || '—'}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

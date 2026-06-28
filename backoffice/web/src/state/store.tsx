@@ -77,7 +77,7 @@ export const useStore = (): Store => {
 };
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [region, setRegionRaw] = useState(() => LS.get('region', ''));
+  const [region, setRegionRaw] = useState(() => LS.get('region', 'all'));
   const [patch, setPatchRaw] = useState(() => LS.get('patch', 'all'));
   const [tier, setTierRaw] = useState(() => LS.get('tier', 'all'));
   const [role, setRoleRaw] = useState(() => LS.get('role', 'ALL'));
@@ -122,25 +122,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     checkAssets().then(setAssetsLocal);
     reloadRegions().then((regions) => {
       setRegionRaw((cur) => {
-        if (regions.length && !regions.includes(cur)) {
-          const next = regions[0];
-          LS.set('region', next);
-          return next;
-        }
-        return cur;
+        // '' (valor antiguo) y 'all' son siempre válidos.
+        if (!cur) { LS.set('region', 'all'); return 'all'; }
+        if (cur === 'all') return cur;
+        // Validar cada región en la lista separada por comas.
+        const selected = cur.split(',');
+        const valid = selected.filter((r) => regions.includes(r));
+        if (valid.length === selected.length) return cur;
+        const next = valid.length ? valid.join(',') : 'all';
+        LS.set('region', next);
+        return next;
       });
     });
   }, [reloadRegions]);
 
   // Cargar metadatos al cambiar de región (y reconciliar filtros).
+  // 'all' → todas las regiones disponibles; coma-separado → solo esas.
   useEffect(() => {
     let cancel = false;
-    if (!region) {
-      setMeta(null);
-      setDdVersion(null);
-      return;
-    }
-    api.meta(region).then((m) => {
+    api.meta(region || 'all').then((m) => {
       if (cancel) return;
       setMeta(m);
       setDdVersion(m.ddragonVersion);

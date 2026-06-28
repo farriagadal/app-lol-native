@@ -20,8 +20,7 @@ import {
 } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
-import { champHref } from '../components/links';
-import { opggUrl } from '../opgg';
+import { champHref, PlayerLink } from '../components/links';
 
 const MIN = 3;
 function enough<T extends { games: number }>(arr: T[]): T[] {
@@ -207,9 +206,9 @@ export function ChampionView() {
           <CvTable
             headers={['Jugador', 'Jueg.', 'Win%', 'KDA']}
             rows={(data?.players ?? []).map((p) => [
-              p.riotId
-                ? <a className="player-link" href={opggUrl(p.riotId, s.region)} target="_blank" rel="noopener noreferrer">{p.riotId}</a>
-                : '—',
+              p.puuid
+                ? <PlayerLink puuid={p.puuid} className="player-link">{p.riotId ?? p.puuid.slice(0, 16) + '…'}</PlayerLink>
+                : (p.riotId ?? '—'),
               p.games,
               <WinRate value={p.winRate} />,
               kdaFixed(p.kda),

@@ -188,9 +188,15 @@ function buildRofl(
 async function resolveBase(candidates: string[], platform: string, gameId: string): Promise<string> {
   for (const base of candidates) {
     try {
+      console.log(`[replay] Probando ${base} …`);
       const meta = await fetchJson<GameMeta>(`${base}/observer-mode/rest/consumer/getGameMetaData/${platform}/${gameId}/1/token`);
-      if (meta && typeof meta.gameEnded !== 'undefined') return `${base}/observer-mode/rest/consumer`;
-    } catch { /* probar siguiente */ }
+      if (meta && typeof meta.gameEnded !== 'undefined') {
+        console.log(`[replay] Servidor OK: ${base}`);
+        return `${base}/observer-mode/rest/consumer`;
+      }
+    } catch (e) {
+      console.warn(`[replay] Falló ${base}: ${e instanceof Error ? e.message : e}`);
+    }
   }
   throw new Error(
     'Replay no disponible. Posibles causas: (1) la partida es de hace más de ~2 semanas y expiró, ' +

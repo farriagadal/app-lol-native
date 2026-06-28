@@ -90,19 +90,19 @@ export function Scoreboard({ match, highlight, playerHref }: {
           <span className="sb-tot">
             {k} / {d} / {as}
           </span>
-          <span className="sb-obj" title="Oro total">
+          <span className="sb-obj" data-tooltip="Oro total" title="Oro total">
             🪙 {(gold / 1000).toFixed(1)}k
           </span>
-          <span className="sb-obj" title="Torres">
+          <span className="sb-obj" data-tooltip="Torres derrumbadas" title="Torres derrumbadas">
             🏰 {o.towerKills || 0}
           </span>
-          <span className="sb-obj" title="Dragones">
+          <span className="sb-obj" data-tooltip="Dragones eliminados" title="Dragones eliminados">
             🐉 {o.dragonKills || 0}
           </span>
-          <span className="sb-obj" title="Heraldos">
+          <span className="sb-obj" data-tooltip="Heraldos del Abismo" title="Heraldos del Abismo">
             🦀 {o.riftHeraldKills || 0}
           </span>
-          <span className="sb-obj" title="Barones">
+          <span className="sb-obj" data-tooltip="Barones Nashor" title="Barones Nashor">
             👹 {o.baronKills || 0}
           </span>
         </div>

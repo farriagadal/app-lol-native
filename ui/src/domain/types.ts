@@ -64,11 +64,18 @@ export interface RuneStatRow {
 }
 
 export interface PlayerStatRow {
+  puuid: string | null;
   riotId: string | null;
   games: number;
   wins: number;
   winRate: number;
   kda: number;
+}
+
+export interface PlayerGamesResponse {
+  total: number;
+  riotId: string | null;
+  games: ItemGameRow[];
 }
 
 export interface CounterStatRow {
@@ -100,6 +107,7 @@ export interface ItemGameRow {
   gameDuration: number;
   gameCreation: number;
   tier: string | null;
+  patch: string | null;
   items: number[];
   keystone: number | null;
   primaryStyle: number | null;

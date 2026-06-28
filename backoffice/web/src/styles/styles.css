@@ -42,18 +42,15 @@ body {
 
 .topbar {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 16px 24px;
+  align-items: center;
+  padding: 6px 24px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   background: var(--bg);
   z-index: 5;
+  min-height: 28px;
 }
-.topbar h1 { font-size: 17px; margin: 0; color: var(--gold); font-weight: 600; }
-.meta { color: var(--muted); font-size: 13px; }
-.meta b { color: var(--text); }
 main { padding: 18px 24px 48px; max-width: 1100px; }
 
 .card {
@@ -212,7 +209,8 @@ input:focus, select:focus { border-color: var(--accent); }
 
 /* Ficha de campeón */
 .cv-header { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
-.cv-header img { width: 48px; height: 48px; border-radius: 8px; background: var(--panel-2); }
+.cv-header img { height: 16px;
+  width: 16px; background: var(--panel-2); }
 .cv-header .name { font-size: 18px; font-weight: 600; color: var(--gold); }
 .cv-header .meta { color: var(--muted); font-size: 12px; }
 .cv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 14px; align-items: start; }
@@ -313,8 +311,35 @@ td.role-cell { vertical-align: middle; }
 .sb-team-head.red { background: color-mix(in oklab, #ec4899 16%, transparent); }
 .sb-team-name { font-weight: 600; }
 .sb-tot { font-family: ui-monospace, monospace; }
-.sb-obj { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.sb-rows { display: flex; flex-direction: column; }
+.sb-obj { position: relative; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: default; }
+.sb-obj[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel-2, #1e293b);
+  border: 1px solid var(--border, rgba(255,255,255,0.15));
+  color: var(--text, #f1f5f9);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 200;
+  pointer-events: none;
+}
+.sb-obj[data-tooltip]:hover::before {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--border, rgba(255,255,255,0.15));
+  z-index: 200;
+  pointer-events: none;
+}
+.sb-rows { display: flex; flex-direction: column; overflow: auto; }
 .sb-player {
   display: grid;
   grid-template-columns: minmax(140px, 1.7fr) auto auto auto minmax(86px, 1fr) auto;
@@ -336,7 +361,6 @@ td.role-cell { vertical-align: middle; }
 .sb-dmg-val { font-size: 10px; color: var(--muted); }
 .sb-build .build-row img, .sb-build .build-row .item-empty { width: 18px; height: 18px; }
 
-@media (max-width: 1060px) { .scoreboard { grid-template-columns: 1fr; } }
 
 /* ---- Botón/link de descarga de replay ---- */
 .dl-btn {
@@ -489,10 +513,44 @@ a.player-link:hover { color: var(--accent); text-decoration: underline; }
 }
 .mcs-opt:hover { background: color-mix(in oklab, var(--accent) 16%, transparent); }
 
+/* ---- Vista de jugador ---- */
+.player-avatar {
+  width: 48px; height: 48px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+}
+.player-avatar-icon { font-size: 24px; line-height: 1; }
+.opgg-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 7px;
+  background: color-mix(in oklab, #c89b3c 14%, transparent);
+  border: 1px solid color-mix(in oklab, #c89b3c 45%, transparent);
+  color: #c89b3c; font-size: 13px; font-weight: 600;
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+  flex: 0 0 auto;
+}
+.opgg-btn:hover {
+  background: color-mix(in oklab, #c89b3c 28%, transparent);
+  border-color: #c89b3c; color: #fff;
+}
+.opgg-favicon { display: block; flex: 0 0 auto; image-rendering: auto; }
+
+/* ---- Historial de recolecciones ---- */
+.collect-hist { display: flex; flex-direction: column; gap: 6px; }
+.hist-row {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px;
+  padding: 8px 10px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  font-size: 13px;
+}
+.hist-region { color: var(--text); font-size: 14px; min-width: 40px; }
+.hist-stat { color: var(--muted); white-space: nowrap; }
+.hist-patches { color: var(--muted); font-size: 11px; flex: 1 1 100%; margin-top: 2px; word-break: break-word; }
+
 /* ---- Detalle decorativo con ray.svg ---- */
 .ray-deco { pointer-events: none; user-select: none; position: absolute; z-index: 0; }
-/* Acento en la barra superior, antes del texto meta */
-.topbar { padding-left: 40px; }
+.topbar { position: relative; padding-left: 32px; }
 .ray-top { top: 50%; left: 14px; width: 18px; transform: translateY(-50%); opacity: 0.9; }
 /* Marca de agua de fondo, fija al viewport (esquina inferior derecha) */
 .ray-bg { position: fixed; bottom: -40px; right: -30px; width: 360px; opacity: 0.1; transform: rotate(6deg); z-index: 0; }

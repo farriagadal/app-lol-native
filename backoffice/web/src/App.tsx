@@ -9,6 +9,7 @@ import { StatsPage } from './pages/StatsPage';
 import { CollectPage } from './pages/CollectPage';
 import { ChampionView } from './pages/ChampionView';
 import { ItemView } from './pages/ItemView';
+import { PlayerView } from './pages/PlayerView';
 import { StreaksPage } from './pages/StreaksPage';
 
 const TABS: SidebarTab[] = [
@@ -64,24 +65,12 @@ export function App() {
   const onCollect = atRoot && tab === 'collect';
   const active = atRoot ? tab : ''; // ninguna pestaña activa en ficha/detalle
 
-  const m = s.meta;
-  const metaLine =
-    m && m.region ? (
-      <>
-        <b>{m.region.toUpperCase()}</b> · {m.totalGames} partidas · {m.totalParticipants} jugadores · parches:{' '}
-        {m.patches.join(', ') || '—'}
-      </>
-    ) : (
-      'Sin datos. Ve a la pestaña Recolección para empezar.'
-    );
-
   return (
     <div className="layout">
       <Sidebar tabs={TABS} active={active} onSelect={selectTab} onBrand={() => selectTab('champions')} />
       <div className="content">
         <header className="topbar">
           <img className="ray-deco ray-top" src="/assets/ray.svg" alt="" />
-          <div className="meta">{metaLine}</div>
         </header>
         <main>
           {!onCollect && <Filters />}
@@ -89,6 +78,7 @@ export function App() {
             <Route path="/" element={<TabPage tab={tab} />} />
             <Route path="/champ/:slug" element={<ChampionView />} />
             <Route path="/item/:id" element={<ItemView />} />
+            <Route path="/player/:puuid" element={<PlayerView />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

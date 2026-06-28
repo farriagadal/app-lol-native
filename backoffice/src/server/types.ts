@@ -59,11 +59,18 @@ export interface RuneStatRow {
 }
 
 export interface PlayerStatRow {
+  puuid: string | null;
   riotId: string | null;
   games: number;
   wins: number;
   winRate: number;
   kda: number;
+}
+
+export interface PlayerGamesResponse {
+  total: number;
+  riotId: string | null;
+  games: ItemGameRow[];
 }
 
 export interface CounterStatRow {
@@ -96,6 +103,7 @@ export interface ItemGameRow {
   gameDuration: number;   // segundos
   gameCreation: number;   // epoch ms
   tier: string | null;    // rango de la partida (no por jugador)
+  patch: string | null;
   items: number[];        // [item0..item6]; item6 = trinket
   keystone: number | null;
   primaryStyle: number | null;

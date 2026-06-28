@@ -2,6 +2,7 @@
 import { Fragment } from 'react';
 import { useAssets } from '../assets/AssetsContext';
 import { AssetImg } from './AssetImg';
+import type { ItemStatRow } from '../domain/types';
 
 /** Par de hechizos de invocador. */
 export function SpellPair({ s1, s2 }: { s1: number | null; s2: number | null }) {
@@ -44,22 +45,29 @@ export function RuneIcons({
 
 /**
  * Fila de build (items 0..5, opcionalmente el 6 = trinket separado). `highlight`
- * resalta un item concreto (el del detalle).
+ * resalta un item concreto (el del detalle). `itemStats` añade winrate al tooltip.
  */
 export function BuildRow({
   items,
   withTrinket,
   highlight,
+  itemStats,
 }: {
   items: number[];
   withTrinket?: boolean;
   highlight?: number | null;
+  itemStats?: Map<number, ItemStatRow>;
 }) {
   const a = useAssets();
   const cell = (id: number | undefined) => {
     if (!id || id <= 0) return <span className="item-empty" />;
     const hl = highlight && id === highlight ? 'hl' : undefined;
-    return <AssetImg className={hl} src={a.itemIcon(id)} title={a.itemName(id)} loading="lazy" />;
+    const name = a.itemName(id);
+    const stat = itemStats?.get(id);
+    const title = stat
+      ? `${name} — ${Math.round(stat.winRate * 100)}% WR · ${stat.games} partidas`
+      : name;
+    return <AssetImg className={hl} src={a.itemIcon(id)} title={title} loading="lazy" />;
   };
   return (
     <span className="build-row">

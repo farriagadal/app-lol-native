@@ -4,6 +4,7 @@ import type {
   ChampionStatRow,
   CollectStatus,
   ItemGamesResponse,
+  PlayerGamesResponse,
   MatchDetail,
   StatFilter,
   StreaksResponse,
@@ -86,6 +87,28 @@ export const api = {
         }),
     ).then((r) => r.json()),
 
+  playerGames: (
+    region: string,
+    puuid: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<PlayerGamesResponse> =>
+    fetch(
+      '/api/player-games?' +
+        qs({
+          region,
+          puuid,
+          patch: f.patch,
+          tier: f.tier,
+          role: f.role,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
+          limit,
+          offset,
+        }),
+    ).then((r) => r.json()),
+
   match: (region: string, matchId: string): Promise<MatchDetail> =>
     fetch('/api/match?' + qs({ region, matchId })).then((r) => r.json()),
 
@@ -95,4 +118,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),
     }),
+
+  collectHistory: (): Promise<{ region: string; totalGames: number; totalParticipants: number; patches: string[] }[]> =>
+    fetch('/api/collect-history').then((r) => r.json()),
+
+  collectPlayer: (req: { region: string; apiKey: string; riotId: string; limit: number }): Promise<Response> =>
+    fetch('/api/collect-player', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }),
+
+  collectPlayerStatus: (): Promise<{ phase: string; riotId?: string; downloaded?: number; skipped?: number; total?: number; error?: string }> =>
+    fetch('/api/collect-player/status').then((r) => r.json()),
 };

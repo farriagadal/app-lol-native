@@ -12,6 +12,7 @@ import type {
   CounterStatRow,
   SynergyStatRow,
   ItemGamesResponse,
+  PlayerGamesResponse,
   ItemGameRow,
   MatchDetail,
   MatchParticipantRow,
@@ -28,6 +29,7 @@ const DDRAGON_FALLBACK_VERSION = '16.9.1';
 /**
  * Lee las bases SQLite (data/<region>/lol.db) y responde consultas para el
  * panel. Cachea la base por región e invalida tras reconstruirla.
+ * Acepta region como clave única, lista separada por comas o 'all' (todas).
  */
 export class StatsDb {
   private SQL: Awaited<ReturnType<typeof initSqlJs>> | null = null;
@@ -137,39 +139,76 @@ export class StatsDb {
     });
   }
 
+  /** Convierte el parámetro region (clave, coma-separado o 'all') en lista de claves válidas. */
+  private parseRegionList(region: string | undefined): string[] {
+    const available = this.regions();
+    if (!region || region === 'all') return available;
+    return region.split(',').filter((r) => available.includes(r));
+  }
+
+  /** Cuenta filas de participantes que cumplen el scope (denominador de pick_rate por items/runas/hechizos). */
+  private countScopeSync(db: Database, f: StatFilter): number {
+    const sql = `SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE ${this.scopeClause(f)}`;
+    return Number(this.rows(db.exec(sql, this.scopeParams(f)))[0]?.c ?? 0);
+  }
+
   async meta(region?: string): Promise<AnalyticsMeta> {
-    const regions = this.regions();
-    const active = region && regions.includes(region) ? region : regions[0] ?? null;
+    const allAvailable = this.regions();
+    const regionList = this.parseRegionList(region);
     const ddragonVersion = await this.ddragonVersion();
-    if (!active) {
-      return { regions, region: null, patches: [], tiers: [], champions: [], totalGames: 0, totalParticipants: 0, ddragonVersion };
-    }
-    const db = await this.open(active);
-    if (!db) {
-      return { regions, region: null, patches: [], tiers: [], champions: [], totalGames: 0, totalParticipants: 0, ddragonVersion };
+
+    if (!regionList.length) {
+      return { regions: allAvailable, region: null, patches: [], tiers: [], champions: [], totalGames: 0, totalParticipants: 0, ddragonVersion };
     }
 
-    const m = this.rows(db.exec('SELECT * FROM v_meta'))[0] ?? {};
-    const patches = this.rows(
-      db.exec('SELECT DISTINCT patch FROM matches ORDER BY patch DESC'),
-    ).map((r) => String(r.patch));
-    const tiers = this.rows(
-      db.exec("SELECT DISTINCT tier FROM matches WHERE tier IS NOT NULL ORDER BY tier"),
-    ).map((r) => String(r.tier));
-    const champions = this.rows(
-      db.exec("SELECT DISTINCT champion_name FROM participants WHERE team_position <> '' ORDER BY champion_name"),
-    ).map((r) => String(r.champion_name));
+    if (regionList.length === 1) {
+      const r = regionList[0];
+      const db = await this.open(r);
+      if (!db) {
+        return { regions: allAvailable, region: null, patches: [], tiers: [], champions: [], totalGames: 0, totalParticipants: 0, ddragonVersion };
+      }
+      const m = this.rows(db.exec('SELECT * FROM v_meta'))[0] ?? {};
+      const patches = this.rows(
+        db.exec('SELECT DISTINCT patch FROM matches ORDER BY patch DESC'),
+      ).map((row) => String(row.patch));
+      const tiers = this.rows(
+        db.exec("SELECT DISTINCT tier FROM matches WHERE tier IS NOT NULL ORDER BY tier"),
+      ).map((row) => String(row.tier));
+      const champions = this.rows(
+        db.exec("SELECT DISTINCT champion_name FROM participants WHERE team_position <> '' ORDER BY champion_name"),
+      ).map((row) => String(row.champion_name));
+      return {
+        regions: allAvailable,
+        region: r,
+        patches,
+        tiers,
+        champions,
+        totalGames: Number(m.total_games ?? 0),
+        totalParticipants: Number(m.total_participants ?? 0),
+        ddragonVersion,
+      };
+    }
 
-    return {
-      regions,
-      region: active,
-      patches,
-      tiers,
-      champions,
-      totalGames: Number(m.total_games ?? 0),
-      totalParticipants: Number(m.total_participants ?? 0),
-      ddragonVersion,
-    };
+    // Multi-región: unión de parches/tiers/campeones, suma de totales.
+    let totalGames = 0, totalParticipants = 0;
+    const patchSet = new Set<string>(), tierSet = new Set<string>(), champSet = new Set<string>();
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      const m = this.rows(db.exec('SELECT * FROM v_meta'))[0] ?? {};
+      totalGames += Number(m.total_games ?? 0);
+      totalParticipants += Number(m.total_participants ?? 0);
+      this.rows(db.exec('SELECT DISTINCT patch FROM matches ORDER BY patch DESC'))
+        .forEach((row) => patchSet.add(String(row.patch)));
+      this.rows(db.exec("SELECT DISTINCT tier FROM matches WHERE tier IS NOT NULL ORDER BY tier"))
+        .forEach((row) => tierSet.add(String(row.tier)));
+      this.rows(db.exec("SELECT DISTINCT champion_name FROM participants WHERE team_position <> '' ORDER BY champion_name"))
+        .forEach((row) => champSet.add(String(row.champion_name)));
+    }
+    const patches = [...patchSet].sort((a, b) => b.localeCompare(a));
+    const tiers = [...tierSet].sort();
+    const champions = [...champSet].sort();
+    return { regions: allAvailable, region: null, patches, tiers, champions, totalGames, totalParticipants, ddragonVersion };
   }
 
   private parsePatch(patch: string): string[] {
@@ -217,15 +256,15 @@ export class StatsDb {
   }
 
   async itemStats(region: string, f: StatFilter): Promise<ItemStatRow[]> {
-    const db = await this.open(region);
-    if (!db) return [];
-    const sql = `
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return [];
+
+    const itemSql = `
       WITH scope AS (
         SELECT p.win win, p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6
         FROM participants p JOIN matches m ON m.match_id = p.match_id
         WHERE ${this.scopeClause(f)}
       ),
-      tot AS (SELECT COUNT(*) c FROM scope),
       it AS (
         SELECT item0 item, win FROM scope WHERE item0 > 0
         UNION ALL SELECT item1, win FROM scope WHERE item1 > 0
@@ -235,16 +274,43 @@ export class StatsDb {
         UNION ALL SELECT item5, win FROM scope WHERE item5 > 0
         UNION ALL SELECT item6, win FROM scope WHERE item6 > 0
       )
-      SELECT item, COUNT(*) games, SUM(win) wins, ROUND(AVG(win), 4) win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tot), 4) pick_rate
+      SELECT item, COUNT(*) games, SUM(win) wins
       FROM it GROUP BY item ORDER BY games DESC LIMIT 80`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      item: Number(r.item),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-    }));
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      const totalScope = this.countScopeSync(db, f);
+      return this.rows(db.exec(itemSql, this.scopeParams(f))).map((r) => ({
+        item: Number(r.item),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+        pickRate: totalScope > 0 ? Number(r.games) / totalScope : 0,
+      }));
+    }
+
+    const merged = new Map<number, { games: number; wins: number }>();
+    let totalScope = 0;
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      totalScope += this.countScopeSync(db, f);
+      for (const row of this.rows(db.exec(itemSql, this.scopeParams(f)))) {
+        const item = Number(row.item);
+        const ex = merged.get(item);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(item, { games: Number(row.games), wins: Number(row.wins) });
+      }
+    }
+    return [...merged.entries()]
+      .map(([item, { games, wins }]) => ({
+        item, games, wins,
+        winRate: games > 0 ? wins / games : 0,
+        pickRate: totalScope > 0 ? games / totalScope : 0,
+      }))
+      .sort((a, b) => b.games - a.games)
+      .slice(0, 80);
   }
 
   /**
@@ -259,32 +325,15 @@ export class StatsDb {
     limit: number,
     offset: number,
   ): Promise<ItemGamesResponse> {
-    const db = await this.open(region);
-    if (!db) return { total: 0, games: [] };
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return { total: 0, games: [] };
+
     const itemWhere = `(p.item0 = $item OR p.item1 = $item OR p.item2 = $item
       OR p.item3 = $item OR p.item4 = $item OR p.item5 = $item OR p.item6 = $item)`;
     const where = `${this.scopeClause(f)} AND ${itemWhere}`;
     const params = { ...this.scopeParams(f), $item: String(item) };
 
-    const totalRes = this.rows(
-      db.exec(
-        `SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE ${where}`,
-        params,
-      ),
-    );
-    const total = Number(totalRes[0]?.c ?? 0);
-
-    const sql = `
-      SELECT m.match_id, p.champion_name, p.team_position, p.win,
-             p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
-             m.game_duration, m.game_creation, m.tier,
-             p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
-             p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
-      FROM participants p JOIN matches m ON m.match_id = p.match_id
-      WHERE ${where}
-      ORDER BY m.game_creation DESC
-      LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
-    const games: ItemGameRow[] = this.rows(db.exec(sql, params)).map((r) => ({
+    const mapRow = (r: Record<string, number | string | null>): ItemGameRow => ({
       matchId: String(r.match_id),
       championName: String(r.champion_name),
       role: String(r.team_position),
@@ -297,6 +346,7 @@ export class StatsDb {
       gameDuration: Number(r.game_duration ?? 0),
       gameCreation: Number(r.game_creation ?? 0),
       tier: r.tier == null ? null : String(r.tier),
+      patch: r.patch == null ? null : String(r.patch),
       items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
       keystone: r.keystone == null ? null : Number(r.keystone),
       primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
@@ -304,128 +354,334 @@ export class StatsDb {
       summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
       summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
       killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
-    }));
-    return { total, games };
+    });
+
+    const gameSql = `
+      SELECT m.match_id, p.champion_name, p.team_position, p.win,
+             p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
+             m.game_duration, m.game_creation, m.tier, m.patch,
+             p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
+             p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
+      FROM participants p JOIN matches m ON m.match_id = p.match_id
+      WHERE ${where}
+      ORDER BY m.game_creation DESC`;
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return { total: 0, games: [] };
+      const totalRes = this.rows(db.exec(
+        `SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE ${where}`, params,
+      ));
+      const total = Number(totalRes[0]?.c ?? 0);
+      const games = this.rows(db.exec(gameSql + ` LIMIT ${limit} OFFSET ${offset}`, params)).map(mapRow);
+      return { total, games };
+    }
+
+    // Multi-región: reunir todas las partidas, ordenar y paginar.
+    const allGames: ItemGameRow[] = [];
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      allGames.push(...this.rows(db.exec(gameSql, params)).map(mapRow));
+    }
+    allGames.sort((a, b) => b.gameCreation - a.gameCreation);
+    return { total: allGames.length, games: allGames.slice(offset, offset + limit) };
   }
 
   /** Scoreboard completo (10 jugadores) de una partida concreta. */
   async matchDetail(region: string, matchId: string): Promise<MatchDetail | null> {
-    const db = await this.open(region);
-    if (!db) return null;
-    const mp = { $mid: matchId };
-    const mrow = this.rows(db.exec('SELECT * FROM matches WHERE match_id = $mid', mp))[0];
-    if (!mrow) return null;
+    const regionList = this.parseRegionList(region);
 
-    const participants: MatchParticipantRow[] = this.rows(
-      db.exec(
-        `SELECT team_id, participant_id, champion_name, team_position, riot_id, win,
-                champ_level, kills, deaths, assists, kda, cs, kill_participation,
-                dmg_to_champs, gold_earned,
-                item0, item1, item2, item3, item4, item5, item6,
-                summoner1_id, summoner2_id, keystone, primary_style, sub_style
-         FROM participants WHERE match_id = $mid
-         ORDER BY team_id, participant_id`,
-        mp,
-      ),
-    ).map((r) => ({
-      teamId: Number(r.team_id),
-      participantId: Number(r.participant_id),
-      championName: String(r.champion_name),
-      role: String(r.team_position ?? ''),
-      riotId: r.riot_id == null ? null : String(r.riot_id),
-      win: Number(r.win) === 1,
-      champLevel: Number(r.champ_level ?? 0),
-      kills: Number(r.kills),
-      deaths: Number(r.deaths),
-      assists: Number(r.assists),
-      kda: Number(r.kda ?? 0),
-      cs: Number(r.cs ?? 0),
-      killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
-      dmgToChamps: Number(r.dmg_to_champs ?? 0),
-      goldEarned: Number(r.gold_earned ?? 0),
-      items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
-      summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
-      summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
-      keystone: r.keystone == null ? null : Number(r.keystone),
-      primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
-      subStyle: r.sub_style == null ? null : Number(r.sub_style),
-    }));
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      const mp = { $mid: matchId };
+      const mrow = this.rows(db.exec('SELECT * FROM matches WHERE match_id = $mid', mp))[0];
+      if (!mrow) continue;
 
-    const teams: MatchTeamObjectives[] = this.rows(
-      db.exec('SELECT * FROM team_objectives WHERE match_id = $mid ORDER BY team_id', mp),
-    ).map((r) => ({
-      teamId: Number(r.team_id),
-      win: Number(r.win) === 1,
-      baronKills: Number(r.baron_kills ?? 0),
-      dragonKills: Number(r.dragon_kills ?? 0),
-      riftHeraldKills: Number(r.rift_herald_kills ?? 0),
-      towerKills: Number(r.tower_kills ?? 0),
-      inhibitorKills: Number(r.inhibitor_kills ?? 0),
-      championKills: Number(r.champion_kills ?? 0),
-    }));
+      const participants: MatchParticipantRow[] = this.rows(
+        db.exec(
+          `SELECT team_id, participant_id, champion_name, team_position, riot_id, win,
+                  champ_level, kills, deaths, assists, kda, cs, kill_participation,
+                  dmg_to_champs, gold_earned,
+                  item0, item1, item2, item3, item4, item5, item6,
+                  summoner1_id, summoner2_id, keystone, primary_style, sub_style
+           FROM participants WHERE match_id = $mid
+           ORDER BY team_id, participant_id`,
+          mp,
+        ),
+      ).map((r) => ({
+        teamId: Number(r.team_id),
+        participantId: Number(r.participant_id),
+        championName: String(r.champion_name),
+        role: String(r.team_position ?? ''),
+        riotId: r.riot_id == null ? null : String(r.riot_id),
+        win: Number(r.win) === 1,
+        champLevel: Number(r.champ_level ?? 0),
+        kills: Number(r.kills),
+        deaths: Number(r.deaths),
+        assists: Number(r.assists),
+        kda: Number(r.kda ?? 0),
+        cs: Number(r.cs ?? 0),
+        killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
+        dmgToChamps: Number(r.dmg_to_champs ?? 0),
+        goldEarned: Number(r.gold_earned ?? 0),
+        items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
+        summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
+        summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
+        keystone: r.keystone == null ? null : Number(r.keystone),
+        primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
+        subStyle: r.sub_style == null ? null : Number(r.sub_style),
+      }));
 
-    return {
-      matchId: String(mrow.match_id),
-      patch: String(mrow.patch ?? ''),
-      gameDuration: Number(mrow.game_duration ?? 0),
-      gameCreation: Number(mrow.game_creation ?? 0),
-      winningTeam: mrow.winning_team == null ? null : Number(mrow.winning_team),
-      tier: mrow.tier == null ? null : String(mrow.tier),
-      participants,
-      teams,
-    };
+      const teams: MatchTeamObjectives[] = this.rows(
+        db.exec('SELECT * FROM team_objectives WHERE match_id = $mid ORDER BY team_id', mp),
+      ).map((r) => ({
+        teamId: Number(r.team_id),
+        win: Number(r.win) === 1,
+        baronKills: Number(r.baron_kills ?? 0),
+        dragonKills: Number(r.dragon_kills ?? 0),
+        riftHeraldKills: Number(r.rift_herald_kills ?? 0),
+        towerKills: Number(r.tower_kills ?? 0),
+        inhibitorKills: Number(r.inhibitor_kills ?? 0),
+        championKills: Number(r.champion_kills ?? 0),
+      }));
+
+      return {
+        matchId: String(mrow.match_id),
+        patch: String(mrow.patch ?? ''),
+        gameDuration: Number(mrow.game_duration ?? 0),
+        gameCreation: Number(mrow.game_creation ?? 0),
+        winningTeam: mrow.winning_team == null ? null : Number(mrow.winning_team),
+        tier: mrow.tier == null ? null : String(mrow.tier),
+        participants,
+        teams,
+      };
+    }
+    return null;
   }
 
   async spellStats(region: string, f: StatFilter): Promise<SpellStatRow[]> {
-    const db = await this.open(region);
-    if (!db) return [];
-    const sql = `
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return [];
+
+    const spellSql = `
       WITH scope AS (
         SELECT p.win win,
           MIN(p.summoner1_id, p.summoner2_id) s1, MAX(p.summoner1_id, p.summoner2_id) s2
         FROM participants p JOIN matches m ON m.match_id = p.match_id
         WHERE ${this.scopeClause(f)} AND p.summoner1_id > 0 AND p.summoner2_id > 0
-      ),
-      tot AS (SELECT COUNT(*) c FROM scope)
-      SELECT s1, s2, COUNT(*) games, SUM(win) wins, ROUND(AVG(win), 4) win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tot), 4) pick_rate
+      )
+      SELECT s1, s2, COUNT(*) games, SUM(win) wins
       FROM scope GROUP BY s1, s2 ORDER BY games DESC LIMIT 40`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      spell1: Number(r.s1),
-      spell2: Number(r.s2),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-    }));
+
+    const countSql = `
+      SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id
+      WHERE ${this.scopeClause(f)} AND p.summoner1_id > 0 AND p.summoner2_id > 0`;
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      const totalScope = Number(this.rows(db.exec(countSql, this.scopeParams(f)))[0]?.c ?? 0);
+      return this.rows(db.exec(spellSql, this.scopeParams(f))).map((r) => ({
+        spell1: Number(r.s1),
+        spell2: Number(r.s2),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+        pickRate: totalScope > 0 ? Number(r.games) / totalScope : 0,
+      }));
+    }
+
+    const merged = new Map<string, { s1: number; s2: number; games: number; wins: number }>();
+    let totalScope = 0;
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      totalScope += Number(this.rows(db.exec(countSql, this.scopeParams(f)))[0]?.c ?? 0);
+      for (const row of this.rows(db.exec(spellSql, this.scopeParams(f)))) {
+        const key = `${row.s1}|${row.s2}`;
+        const ex = merged.get(key);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(key, { s1: Number(row.s1), s2: Number(row.s2), games: Number(row.games), wins: Number(row.wins) });
+      }
+    }
+    return [...merged.values()]
+      .map(({ s1, s2, games, wins }) => ({
+        spell1: s1, spell2: s2, games, wins,
+        winRate: games > 0 ? wins / games : 0,
+        pickRate: totalScope > 0 ? games / totalScope : 0,
+      }))
+      .sort((a, b) => b.games - a.games)
+      .slice(0, 40);
   }
 
   /** Jugadores que más han jugado el campeón del filtro. */
   async playerStats(region: string, f: StatFilter): Promise<PlayerStatRow[]> {
-    const db = await this.open(region);
-    if (!db || f.champion === 'all') return [];
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length || f.champion === 'all') return [];
+
     const sql = `
       WITH scope AS (
-        SELECT p.puuid, p.riot_id, p.win, p.kda
+        SELECT p.puuid, p.riot_id, p.win, p.kda, m.game_creation
         FROM participants p JOIN matches m ON m.match_id = p.match_id
         WHERE ${this.scopeClause(f)}
       )
-      SELECT MAX(riot_id) riot_id, COUNT(*) games, SUM(win) wins,
-             ROUND(AVG(win), 4) win_rate, ROUND(AVG(kda), 2) kda
+      SELECT puuid,
+        (SELECT s2.riot_id FROM scope s2 WHERE s2.puuid = scope.puuid ORDER BY s2.game_creation DESC LIMIT 1) riot_id,
+        COUNT(*) games, SUM(win) wins,
+        ROUND(AVG(win), 4) win_rate, ROUND(AVG(kda), 2) kda
       FROM scope GROUP BY puuid ORDER BY games DESC, wins DESC LIMIT 25`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      riotId: r.riot_id == null ? null : String(r.riot_id),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      kda: Number(r.kda),
-    }));
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
+        puuid: r.puuid == null ? null : String(r.puuid),
+        riotId: r.riot_id == null ? null : String(r.riot_id),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.win_rate),
+        kda: Number(r.kda),
+      }));
+    }
+
+    const merged = new Map<string, { riotId: string | null; games: number; wins: number; kdaSum: number }>();
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      for (const row of this.rows(db.exec(sql, this.scopeParams(f)))) {
+        const puuid = String(row.puuid);
+        const ex = merged.get(puuid);
+        if (ex) {
+          ex.games += Number(row.games);
+          ex.wins += Number(row.wins);
+          ex.kdaSum += Number(row.kda) * Number(row.games);
+          if (!ex.riotId && row.riot_id != null) ex.riotId = String(row.riot_id);
+        } else {
+          merged.set(puuid, {
+            riotId: row.riot_id == null ? null : String(row.riot_id),
+            games: Number(row.games),
+            wins: Number(row.wins),
+            kdaSum: Number(row.kda) * Number(row.games),
+          });
+        }
+      }
+    }
+    return [...merged.entries()]
+      .map(([puuid, { riotId, games, wins, kdaSum }]) => ({
+        puuid,
+        riotId,
+        games,
+        wins,
+        winRate: games > 0 ? wins / games : 0,
+        kda: games > 0 ? kdaSum / games : 0,
+      }))
+      .sort((a, b) => b.games - a.games || b.wins - a.wins)
+      .slice(0, 25);
+  }
+
+  /** Partidas de un jugador específico (por puuid). */
+  async playerGames(
+    region: string,
+    puuid: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<PlayerGamesResponse> {
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return { total: 0, riotId: null, games: [] };
+
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
+    const dateW = this.dateWhere;
+
+    const where = `p.puuid = $puuid AND p.team_position <> ''
+      AND (${patchW})
+      AND ($tier = 'all' OR m.tier = $tier)
+      AND ($role = 'ALL' OR p.team_position = $role)
+      AND ${dateW}`;
+
+    const baseParams: Record<string, string> = {
+      ...this.patchBindings(patches),
+      $puuid: puuid,
+      $tier: f.tier,
+      $role: f.role,
+      $dateFrom: f.dateFrom ?? '',
+      $dateTo: f.dateTo ?? '',
+    };
+
+    const gameSql = `
+      SELECT m.match_id, p.champion_name, p.team_position, p.win,
+             p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
+             m.game_duration, m.game_creation, m.tier, m.patch,
+             p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
+             p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
+      FROM participants p JOIN matches m ON m.match_id = p.match_id
+      WHERE ${where}
+      ORDER BY m.game_creation DESC`;
+
+    const mapGame = (r: Record<string, number | string | null>): ItemGameRow => ({
+      matchId: String(r.match_id),
+      championName: String(r.champion_name),
+      role: String(r.team_position),
+      win: Number(r.win) === 1,
+      kills: Number(r.kills),
+      deaths: Number(r.deaths),
+      assists: Number(r.assists),
+      kda: Number(r.kda ?? 0),
+      cs: Number(r.cs ?? 0),
+      gameDuration: Number(r.game_duration ?? 0),
+      gameCreation: Number(r.game_creation ?? 0),
+      tier: r.tier == null ? null : String(r.tier),
+      patch: r.patch == null ? null : String(r.patch),
+      items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
+      keystone: r.keystone == null ? null : Number(r.keystone),
+      primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
+      subStyle: r.sub_style == null ? null : Number(r.sub_style),
+      summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
+      summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
+      killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
+    });
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return { total: 0, riotId: null, games: [] };
+      const infoRows = this.rows(db.exec(
+        `SELECT p.riot_id FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE p.puuid = $puuid ORDER BY m.game_creation DESC LIMIT 1`,
+        { $puuid: puuid },
+      ));
+      const riotId = infoRows[0]?.riot_id == null ? null : String(infoRows[0].riot_id);
+      const totalRes = this.rows(db.exec(`SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE ${where}`, baseParams));
+      const total = Number(totalRes[0]?.c ?? 0);
+      const games = this.rows(db.exec(gameSql + ` LIMIT ${limit} OFFSET ${offset}`, baseParams)).map(mapGame);
+      return { total, riotId, games };
+    }
+
+    // Multi-región: reunir todas las partidas, ordenar y paginar.
+    let riotId: string | null = null;
+    const allGames: ItemGameRow[] = [];
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      if (!riotId) {
+        const info = this.rows(db.exec(
+          `SELECT p.riot_id FROM participants p JOIN matches m ON m.match_id = p.match_id WHERE p.puuid = $puuid ORDER BY m.game_creation DESC LIMIT 1`,
+          { $puuid: puuid },
+        ));
+        if (info[0]?.riot_id != null) riotId = String(info[0].riot_id);
+      }
+      allGames.push(...this.rows(db.exec(gameSql, baseParams)).map(mapGame));
+    }
+    allGames.sort((a, b) => b.gameCreation - a.gameCreation);
+    return { total: allGames.length, riotId, games: allGames.slice(offset, offset + limit) };
   }
 
   /** Campeones rivales en el mismo rol (counters), con win/pick rate. */
   async counterStats(region: string, f: StatFilter): Promise<CounterStatRow[]> {
-    const db = await this.open(region);
-    if (!db || f.champion === 'all') return [];
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length || f.champion === 'all') return [];
+
     const patches = this.parsePatch(f.patch);
     const patchW = this.patchClause(patches);
     const sql = `
@@ -440,25 +696,61 @@ export class StatsDb {
           AND (${patchW})
           AND ($tier = 'all' OR m.tier = $tier)
           AND ($role = 'ALL' OR p1.team_position = $role)
-      ),
-      tot AS (SELECT COUNT(*) c FROM base)
-      SELECT opp opponent, COUNT(*) games, SUM(win) wins,
-             ROUND(AVG(win), 4) win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tot), 4) pick_rate
+      )
+      SELECT opp opponent, COUNT(*) games, SUM(win) wins
       FROM base GROUP BY opp ORDER BY games DESC LIMIT 25`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      opponent: String(r.opponent),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-    }));
+
+    const countSql = `
+      SELECT COUNT(*) c FROM participants p1
+      JOIN matches m ON m.match_id = p1.match_id
+      WHERE p1.champion_name = $champion AND p1.team_position <> ''
+        AND (${patchW})
+        AND ($tier = 'all' OR m.tier = $tier)
+        AND ($role = 'ALL' OR p1.team_position = $role)`;
+
+    const params = this.scopeParams(f);
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      const totalBase = Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      return this.rows(db.exec(sql, params)).map((r) => ({
+        opponent: String(r.opponent),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+        pickRate: totalBase > 0 ? Number(r.games) / totalBase : 0,
+      }));
+    }
+
+    const merged = new Map<string, { games: number; wins: number }>();
+    let totalBase = 0;
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      totalBase += Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      for (const row of this.rows(db.exec(sql, params))) {
+        const opp = String(row.opponent);
+        const ex = merged.get(opp);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(opp, { games: Number(row.games), wins: Number(row.wins) });
+      }
+    }
+    return [...merged.entries()]
+      .map(([opponent, { games, wins }]) => ({
+        opponent, games, wins,
+        winRate: games > 0 ? wins / games : 0,
+        pickRate: totalBase > 0 ? games / totalBase : 0,
+      }))
+      .sort((a, b) => b.games - a.games)
+      .slice(0, 25);
   }
 
   /** Compañeros de equipo con mejor win rate junto al campeón (sinergia/duo). */
   async synergyStats(region: string, f: StatFilter): Promise<SynergyStatRow[]> {
-    const db = await this.open(region);
-    if (!db || f.champion === 'all') return [];
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length || f.champion === 'all') return [];
+
     const patches = this.parsePatch(f.patch);
     const patchW = this.patchClause(patches);
     const sql = `
@@ -473,89 +765,186 @@ export class StatsDb {
           AND (${patchW})
           AND ($tier = 'all' OR m.tier = $tier)
           AND ($role = 'ALL' OR p1.team_position = $role)
-      ),
-      tot AS (SELECT COUNT(*) c FROM base)
-      SELECT mate champion, COUNT(*) games, SUM(win) wins,
-             ROUND(AVG(win), 4) win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tot), 4) pick_rate
-      FROM base GROUP BY mate ORDER BY win_rate DESC, games DESC LIMIT 25`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      champion: String(r.champion),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-    }));
+      )
+      SELECT mate champion, COUNT(*) games, SUM(win) wins
+      FROM base GROUP BY mate ORDER BY wins DESC, games DESC LIMIT 25`;
+
+    const countSql = `
+      SELECT COUNT(*) c FROM participants p1
+      JOIN matches m ON m.match_id = p1.match_id
+      WHERE p1.champion_name = $champion AND p1.team_position <> ''
+        AND (${patchW})
+        AND ($tier = 'all' OR m.tier = $tier)
+        AND ($role = 'ALL' OR p1.team_position = $role)`;
+
+    const params = this.scopeParams(f);
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      const totalBase = Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      return this.rows(db.exec(sql, params)).map((r) => ({
+        champion: String(r.champion),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+        pickRate: totalBase > 0 ? Number(r.games) / totalBase : 0,
+      }));
+    }
+
+    const merged = new Map<string, { games: number; wins: number }>();
+    let totalBase = 0;
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      totalBase += Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      for (const row of this.rows(db.exec(sql, params))) {
+        const mate = String(row.champion);
+        const ex = merged.get(mate);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(mate, { games: Number(row.games), wins: Number(row.wins) });
+      }
+    }
+    return [...merged.entries()]
+      .map(([champion, { games, wins }]) => ({
+        champion, games, wins,
+        winRate: games > 0 ? wins / games : 0,
+        pickRate: totalBase > 0 ? games / totalBase : 0,
+      }))
+      .sort((a, b) => b.wins / (b.games || 1) - a.wins / (a.games || 1) || b.games - a.games)
+      .slice(0, 25);
   }
 
   async runeStats(region: string, f: StatFilter): Promise<RuneStatRow[]> {
-    const db = await this.open(region);
-    if (!db) return [];
-    const sql = `
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return [];
+
+    const runeSql = `
       WITH scope AS (
         SELECT p.win win, p.keystone, p.primary_style, p.sub_style
         FROM participants p JOIN matches m ON m.match_id = p.match_id
         WHERE ${this.scopeClause(f)} AND p.keystone IS NOT NULL
-      ),
-      tot AS (SELECT COUNT(*) c FROM scope)
-      SELECT keystone, primary_style, sub_style, COUNT(*) games, SUM(win) wins,
-             ROUND(AVG(win), 4) win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tot), 4) pick_rate
+      )
+      SELECT keystone, primary_style, sub_style, COUNT(*) games, SUM(win) wins
       FROM scope GROUP BY keystone, primary_style, sub_style ORDER BY games DESC LIMIT 40`;
-    return this.rows(db.exec(sql, this.scopeParams(f))).map((r) => ({
-      keystone: Number(r.keystone),
-      primaryStyle: Number(r.primary_style),
-      subStyle: Number(r.sub_style),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-    }));
+
+    const countSql = `
+      SELECT COUNT(*) c FROM participants p JOIN matches m ON m.match_id = p.match_id
+      WHERE ${this.scopeClause(f)} AND p.keystone IS NOT NULL`;
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return [];
+      const totalScope = Number(this.rows(db.exec(countSql, this.scopeParams(f)))[0]?.c ?? 0);
+      return this.rows(db.exec(runeSql, this.scopeParams(f))).map((r) => ({
+        keystone: Number(r.keystone),
+        primaryStyle: Number(r.primary_style),
+        subStyle: Number(r.sub_style),
+        games: Number(r.games),
+        wins: Number(r.wins),
+        winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+        pickRate: totalScope > 0 ? Number(r.games) / totalScope : 0,
+      }));
+    }
+
+    const merged = new Map<string, { keystone: number; primaryStyle: number; subStyle: number; games: number; wins: number }>();
+    let totalScope = 0;
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      totalScope += Number(this.rows(db.exec(countSql, this.scopeParams(f)))[0]?.c ?? 0);
+      for (const row of this.rows(db.exec(runeSql, this.scopeParams(f)))) {
+        const key = `${row.keystone}|${row.primary_style}|${row.sub_style}`;
+        const ex = merged.get(key);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(key, {
+          keystone: Number(row.keystone),
+          primaryStyle: Number(row.primary_style),
+          subStyle: Number(row.sub_style),
+          games: Number(row.games),
+          wins: Number(row.wins),
+        });
+      }
+    }
+    return [...merged.values()]
+      .map((x) => ({
+        ...x,
+        winRate: x.games > 0 ? x.wins / x.games : 0,
+        pickRate: totalScope > 0 ? x.games / totalScope : 0,
+      }))
+      .sort((a, b) => b.games - a.games)
+      .slice(0, 40);
   }
 
   async champions(region: string, patch = 'all', tier = 'all', dateFrom = '', dateTo = ''): Promise<ChampionStatRow[]> {
-    const db = await this.open(region);
-    if (!db) return [];
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return [];
 
     const patches = this.parsePatch(patch);
     const patchW = this.patchClause(patches);
     const dateW = `($dateFrom = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') >= $dateFrom)
         AND ($dateTo = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') <= $dateTo)`;
-    const sql = `
-      WITH tg AS (
-        SELECT COUNT(*) c FROM matches m
-        WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
-          AND ${dateW}
-      ),
-      bn AS (
-        SELECT b.champion_name cn, COUNT(*) c
-        FROM bans b JOIN matches m ON m.match_id = b.match_id
-        WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
-          AND ${dateW}
-        GROUP BY b.champion_name
-      )
+    const bindings = { ...this.patchBindings(patches), $tier: tier, $dateFrom: dateFrom, $dateTo: dateTo };
+
+    const champSql = `
       SELECT p.champion_name AS champion_name,
              p.team_position AS role,
              COUNT(*) AS games,
-             SUM(p.win) AS wins,
-             ROUND(AVG(p.win), 4) AS win_rate,
-             ROUND(COUNT(*) * 1.0 / (SELECT c FROM tg), 4) AS pick_rate,
-             ROUND(COALESCE((SELECT c FROM bn WHERE cn = p.champion_name), 0)
-                   * 1.0 / (SELECT c FROM tg), 4) AS ban_rate
+             SUM(p.win) AS wins
       FROM participants p JOIN matches m ON m.match_id = p.match_id
       WHERE p.team_position <> ''
         AND (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
         AND ${dateW}
       GROUP BY p.champion_name, p.team_position`;
 
-    return this.rows(db.exec(sql, { ...this.patchBindings(patches), $tier: tier, $dateFrom: dateFrom, $dateTo: dateTo })).map((r) => ({
-      championName: String(r.champion_name),
-      role: String(r.role),
-      games: Number(r.games),
-      wins: Number(r.wins),
-      winRate: Number(r.win_rate),
-      pickRate: Number(r.pick_rate),
-      banRate: Number(r.ban_rate),
+    const banSql = `
+      SELECT b.champion_name cn, COUNT(*) c
+      FROM bans b JOIN matches m ON m.match_id = b.match_id
+      WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier) AND ${dateW}
+      GROUP BY b.champion_name`;
+
+    const totalMatchSql = `
+      SELECT COUNT(*) c FROM matches m
+      WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier) AND ${dateW}`;
+
+    // Merge entries by (champion, role).
+    const merged = new Map<string, { championName: string; role: string; games: number; wins: number }>();
+    const bansByChamp = new Map<string, number>(); // champion → total bans across regions
+    let grandTotalMatches = 0;
+
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      const regionTotal = Number(this.rows(db.exec(totalMatchSql, bindings))[0]?.c ?? 0);
+      grandTotalMatches += regionTotal;
+
+      for (const row of this.rows(db.exec(champSql, bindings))) {
+        const key = `${row.champion_name}|${row.role}`;
+        const ex = merged.get(key);
+        if (ex) { ex.games += Number(row.games); ex.wins += Number(row.wins); }
+        else merged.set(key, {
+          championName: String(row.champion_name),
+          role: String(row.role),
+          games: Number(row.games),
+          wins: Number(row.wins),
+        });
+      }
+
+      // Bans: back-calc del count usando el total de partidas de la región.
+      for (const row of this.rows(db.exec(banSql, bindings))) {
+        const champ = String(row.cn);
+        bansByChamp.set(champ, (bansByChamp.get(champ) ?? 0) + Number(row.c));
+      }
+    }
+
+    return [...merged.values()].map(({ championName, role, games, wins }) => ({
+      championName,
+      role,
+      games,
+      wins,
+      winRate: games > 0 ? wins / games : 0,
+      pickRate: grandTotalMatches > 0 ? games / grandTotalMatches : 0,
+      banRate: grandTotalMatches > 0 ? (bansByChamp.get(championName) ?? 0) / grandTotalMatches : 0,
     }));
   }
 
@@ -569,12 +958,12 @@ export class StatsDb {
     limit: number,
     offset: number,
   ): Promise<StreaksResponse> {
-    const db = await this.open(region);
-    if (!db) return { total: 0, players: [], matches: [] };
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return { total: 0, players: [], matches: [] };
 
     const params = this.scopeParams(f);
 
-    const playerSql = `
+    const playerAllSql = `
       WITH scoped AS (
         SELECT p.puuid, p.riot_id, p.win, m.game_creation
         FROM participants p JOIN matches m ON m.match_id = p.match_id
@@ -594,44 +983,108 @@ export class StatsDb {
         FROM streak_sizes WHERE win = 1 GROUP BY puuid
       ),
       player_totals AS (
-        SELECT puuid, MAX(riot_id) riot_id, COUNT(*) total_games, SUM(win) wins
-        FROM scoped GROUP BY puuid
-      ),
-      player_stats AS (
-        SELECT t.puuid, t.riot_id, t.total_games, t.wins,
-               COALESCE(w.longest_win_streak, 0) longest_win_streak
-        FROM player_totals t LEFT JOIN player_win_streak w ON w.puuid = t.puuid
+        SELECT s.puuid,
+          (SELECT s2.riot_id FROM scoped s2 WHERE s2.puuid = s.puuid ORDER BY s2.game_creation DESC LIMIT 1) riot_id,
+          COUNT(*) total_games, SUM(win) wins
+        FROM scoped s GROUP BY s.puuid
       )
-      SELECT (SELECT COUNT(*) FROM player_stats) total_count, p.*
-      FROM player_stats p
-      ORDER BY p.longest_win_streak DESC, p.total_games DESC
-      LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
+      SELECT t.puuid, t.riot_id, t.total_games, t.wins,
+             COALESCE(w.longest_win_streak, 0) longest_win_streak
+      FROM player_totals t LEFT JOIN player_win_streak w ON w.puuid = t.puuid`;
 
-    const playerRows = this.rows(db.exec(playerSql, params));
-    const total = Number(playerRows[0]?.total_count ?? 0);
-    const players: StreakPlayer[] = playerRows.map((r) => ({
-      puuid: String(r.puuid),
-      riotId: r.riot_id == null ? '' : String(r.riot_id),
-      longestWinStreak: Number(r.longest_win_streak),
-      totalGames: Number(r.total_games),
-      wins: Number(r.wins),
-    }));
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return { total: 0, players: [], matches: [] };
+
+      const allRows = this.rows(db.exec(playerAllSql + ' ORDER BY longest_win_streak DESC, total_games DESC', params));
+      const total = allRows.length;
+      const pageRows = allRows.slice(offset, offset + limit);
+      const players: StreakPlayer[] = pageRows.map((r) => ({
+        puuid: String(r.puuid),
+        riotId: r.riot_id == null ? '' : String(r.riot_id),
+        longestWinStreak: Number(r.longest_win_streak),
+        totalGames: Number(r.total_games),
+        wins: Number(r.wins),
+      }));
+
+      if (!players.length) return { total, players, matches: [] };
+
+      const puuidList = players.map((p) => `'${p.puuid.replace(/'/g, "''")}'`).join(',');
+      const matchSql = `
+        SELECT p.puuid, m.match_id, p.champion_name, p.team_position, p.win,
+               p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
+               m.game_duration, m.game_creation, m.tier, m.patch,
+               p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
+               p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
+        FROM participants p JOIN matches m ON m.match_id = p.match_id
+        WHERE p.puuid IN (${puuidList}) AND ${this.scopeClause(f)}
+        ORDER BY p.puuid, m.game_creation DESC`;
+
+      const matches: StreakGameRow[] = this.rows(db.exec(matchSql, params)).map((r) => this.mapStreakRow(r));
+      return { total, players, matches };
+    }
+
+    // Multi-región: recoger todos los jugadores, mergear, paginar, luego buscar partidas.
+    const playerMap = new Map<string, StreakPlayer>();
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      for (const row of this.rows(db.exec(playerAllSql, params))) {
+        const puuid = String(row.puuid);
+        const p: StreakPlayer = {
+          puuid,
+          riotId: row.riot_id == null ? '' : String(row.riot_id),
+          longestWinStreak: Number(row.longest_win_streak),
+          totalGames: Number(row.total_games),
+          wins: Number(row.wins),
+        };
+        const ex = playerMap.get(puuid);
+        if (ex) {
+          ex.totalGames += p.totalGames;
+          ex.wins += p.wins;
+          ex.longestWinStreak = Math.max(ex.longestWinStreak, p.longestWinStreak);
+          if (!ex.riotId && p.riotId) ex.riotId = p.riotId;
+        } else {
+          playerMap.set(puuid, p);
+        }
+      }
+    }
+
+    const sortedAll = [...playerMap.values()]
+      .sort((a, b) => b.longestWinStreak - a.longestWinStreak || b.totalGames - a.totalGames);
+    const total = sortedAll.length;
+    const players = sortedAll.slice(offset, offset + limit);
 
     if (!players.length) return { total, players, matches: [] };
 
-    // Embebemos los puuids directamente (vienen de nuestra propia BD, no de usuario).
     const puuidList = players.map((p) => `'${p.puuid.replace(/'/g, "''")}'`).join(',');
     const matchSql = `
       SELECT p.puuid, m.match_id, p.champion_name, p.team_position, p.win,
              p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
-             m.game_duration, m.game_creation, m.tier,
+             m.game_duration, m.game_creation, m.tier, m.patch,
              p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
              p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
       FROM participants p JOIN matches m ON m.match_id = p.match_id
       WHERE p.puuid IN (${puuidList}) AND ${this.scopeClause(f)}
       ORDER BY p.puuid, m.game_creation DESC`;
 
-    const matches: StreakGameRow[] = this.rows(db.exec(matchSql, params)).map((r) => ({
+    const allMatches: StreakGameRow[] = [];
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      allMatches.push(...this.rows(db.exec(matchSql, params)).map((row) => this.mapStreakRow(row)));
+    }
+    // Ordenar por puuid y luego por gameCreation desc (igual que en single-region).
+    allMatches.sort((a, b) => {
+      if (a.puuid !== b.puuid) return a.puuid.localeCompare(b.puuid);
+      return b.gameCreation - a.gameCreation;
+    });
+
+    return { total, players, matches: allMatches };
+  }
+
+  private mapStreakRow(r: Record<string, number | string | null>): StreakGameRow {
+    return {
       puuid: String(r.puuid),
       matchId: String(r.match_id),
       championName: String(r.champion_name),
@@ -645,6 +1098,7 @@ export class StatsDb {
       gameDuration: Number(r.game_duration ?? 0),
       gameCreation: Number(r.game_creation ?? 0),
       tier: r.tier == null ? null : String(r.tier),
+      patch: r.patch == null ? null : String(r.patch),
       items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
       keystone: r.keystone == null ? null : Number(r.keystone),
       primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
@@ -652,8 +1106,6 @@ export class StatsDb {
       summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
       summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
       killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
-    }));
-
-    return { total, players, matches };
+    };
   }
 }

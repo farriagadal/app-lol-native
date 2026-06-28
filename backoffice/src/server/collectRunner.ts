@@ -27,6 +27,9 @@ export class CollectRunner {
   private seenFile(region: string): string {
     return path.join(this.dataDir, region, 'seen-matches.txt');
   }
+  private seenPlayersFile(region: string): string {
+    return path.join(this.dataDir, region, 'seen-players.txt');
+  }
 
   private countMatches(region: string): number {
     const f = this.seenFile(region);
@@ -82,6 +85,11 @@ export class CollectRunner {
     this.running.add(region);
     const before = this.countMatches(region);
     this.emit({ phase: 'starting', region, collected: before, target: req.maxMatches });
+
+    // Limpiar seen-players al iniciar una nueva corrida para que los jugadores
+    // que han jugado partidas nuevas desde la última recolección sean procesados
+    // de nuevo. La deduplicación cross-corrida la garantiza seen-matches.txt.
+    try { fs.unlinkSync(this.seenPlayersFile(region)); } catch { /* no existía */ }
 
     let error: string | null = null;
     try {

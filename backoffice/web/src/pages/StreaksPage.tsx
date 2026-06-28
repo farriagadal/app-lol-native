@@ -11,6 +11,7 @@ import {
   TierEmblem,
   ROLE_LABEL,
   TIER_LABEL,
+  type ItemStatRow,
   type StreakGameRow,
   type StreakPlayer,
   type StreaksResponse,
@@ -19,10 +20,24 @@ import {
 import { api } from '../api';
 import { useStore } from '../state/store';
 import { opggUrl } from '../opgg';
-import { downloadReplay } from '../downloadReplay';
+import { PlayerLink } from '../components/links';
+import { watchReplay } from '../downloadReplay';
 
 const PLAYERS_PER_PAGE = 20;
 const matchCache = new Map<string, MatchDetail>();
+
+function cmpPatch(a: string, b: string): number {
+  const [aMaj = 0, aMin = 0] = a.split('.').map(Number);
+  const [bMaj = 0, bMin = 0] = b.split('.').map(Number);
+  return aMaj !== bMaj ? aMaj - bMaj : aMin - bMin;
+}
+function newestPatch(patches: (string | null)[]): string | null {
+  return patches.reduce<string | null>((best, p) => {
+    if (!p) return best;
+    if (!best) return p;
+    return cmpPatch(p, best) > 0 ? p : best;
+  }, null);
+}
 
 function mostCommonTier(matches: StreakGameRow[]): string | null {
   const counts = new Map<string, number>();
@@ -50,7 +65,7 @@ function longestWinStreakIndices(matches: StreakGameRow[]): Set<number> {
   return s;
 }
 
-function GameRow({ g, region, isStreak }: { g: StreakGameRow; region: string; isStreak: boolean }) {
+function GameRow({ g, region, isStreak, showReplay, itemStats }: { g: StreakGameRow; region: string; isStreak: boolean; showReplay: boolean; itemStats: Map<number, ItemStatRow> }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<MatchDetail | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -89,21 +104,24 @@ function GameRow({ g, region, isStreak }: { g: StreakGameRow; region: string; is
         <td className="num">{g.cs}</td>
         <td><SpellPair s1={g.summoner1} s2={g.summoner2} /></td>
         <td><RuneIcons keystone={g.keystone} sub={g.subStyle} /></td>
-        <td><BuildRow items={g.items} withTrinket /></td>
+        <td><BuildRow items={g.items} withTrinket itemStats={itemStats} /></td>
+        <td className="num">{g.patch ?? '—'}</td>
         <td className="num">{new Date(g.gameCreation).toLocaleDateString('es-CL')}</td>
         <td>
           <span className={`result ${g.win ? 'win' : 'lose'}`}>{g.win ? 'Victoria' : 'Derrota'}</span>
-          <button
-            className="dl-btn"
-            title="Descargar replay (.rofl) para ver en el cliente de LoL"
-            disabled={downloading}
-            onClick={(e) => { e.stopPropagation(); void downloadReplay(g.matchId, setDownloading); }}
-          >{downloading ? '…' : '▶'}</button>
+          {showReplay && (
+            <button
+              className="dl-btn"
+              title="Reproducir replay en el cliente de LoL"
+              disabled={downloading}
+              onClick={(e) => { e.stopPropagation(); void watchReplay(g.matchId, setDownloading); }}
+            >{downloading ? '…' : '▶'}</button>
+          )}
         </td>
       </tr>
       {open && (
         <tr className="game-detail">
-          <td colSpan={10}>
+          <td colSpan={11}>
             <div className="detail-scroll">
               {loadError ? (
                 <div className="empty">Error al cargar la partida.</div>
@@ -120,22 +138,19 @@ function GameRow({ g, region, isStreak }: { g: StreakGameRow; region: string; is
   );
 }
 
-function PlayerCard({ player, matches, region }: { player: StreakPlayer; matches: StreakGameRow[]; region: string }) {
+function PlayerCard({ player, matches, region, itemStats }: { player: StreakPlayer; matches: StreakGameRow[]; region: string; itemStats: Map<number, ItemStatRow> }) {
   const streakIndices = longestWinStreakIndices(matches);
   const winRatePct = player.totalGames > 0 ? Math.round((player.wins / player.totalGames) * 100) : 0;
   const tier = mostCommonTier(matches);
+  const newest = newestPatch(matches.map((m) => m.patch));
 
   return (
     <div className="streak-player card">
       <div className="streak-header">
         {tier && <TierEmblem tier={tier} className="streak-tier-emb" />}
-        {player.riotId ? (
-          <a className="streak-name player-link" href={opggUrl(player.riotId, region)} target="_blank" rel="noopener noreferrer">
-            {player.riotId}
-          </a>
-        ) : (
-          <span className="streak-name">{player.puuid.slice(0, 20) + '…'}</span>
-        )}
+        <PlayerLink puuid={player.puuid} className="streak-name player-link">
+          {player.riotId || player.puuid.slice(0, 20) + '…'}
+        </PlayerLink>
         {player.longestWinStreak > 0 && (
           <span className="streak-badge">{player.longestWinStreak} victorias seguidas</span>
         )}
@@ -156,13 +171,14 @@ function PlayerCard({ player, matches, region }: { player: StreakPlayer; matches
                 <th>Hechizos</th>
                 <th>Runas</th>
                 <th>Build</th>
+                <th>Parche</th>
                 <th>Fecha</th>
                 <th>Resultado</th>
               </tr>
             </thead>
             <tbody>
               {matches.map((g, i) => (
-                <GameRow key={g.matchId} g={g} region={region} isStreak={streakIndices.has(i)} />
+                <GameRow key={g.matchId} g={g} region={region} isStreak={streakIndices.has(i)} showReplay={g.patch === newest} itemStats={itemStats} />
               ))}
             </tbody>
           </table>
@@ -177,6 +193,7 @@ export function StreaksPage() {
   const [resp, setResp] = useState<StreaksResponse | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [itemStatsMap, setItemStatsMap] = useState<Map<number, ItemStatRow>>(new Map());
 
   useEffect(() => { setOffset(0); }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
@@ -189,6 +206,17 @@ export function StreaksPage() {
       .catch(() => { if (!cancel) { setResp(null); setLoading(false); } });
     return () => { cancel = true; };
   }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo, offset]);
+
+  useEffect(() => {
+    if (!s.region) { setItemStatsMap(new Map()); return; }
+    api.stats<ItemStatRow>('items', s.region, s.statFilter(s.champion))
+      .then((rows) => {
+        const m = new Map<number, ItemStatRow>();
+        for (const r of rows) m.set(r.item, r);
+        setItemStatsMap(m);
+      })
+      .catch(() => {});
+  }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
   const players = resp?.players ?? [];
   const matchesByPuuid = new Map<string, StreakGameRow[]>();
@@ -231,6 +259,7 @@ export function StreaksPage() {
               player={p}
               matches={matchesByPuuid.get(p.puuid) ?? []}
               region={s.region}
+              itemStats={itemStatsMap}
             />
           ))}
           {total > PLAYERS_PER_PAGE && (

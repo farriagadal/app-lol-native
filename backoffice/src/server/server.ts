@@ -9,7 +9,9 @@ import path from 'node:path';
 import { StatsDb } from './db';
 import { CollectRunner } from './collectRunner';
 import { REGIONS } from '../collector/config';
-import { downloadReplay } from './replayDownloader';
+import { downloadReplay, parseMatchId } from './replayDownloader';
+import { lcuReplayDownload, lcuReplayWatch } from './replayLcu';
+import { collectPlayer, type PlayerCollectProgress } from './playerCollector';
 import type { CollectRequest } from './types';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -21,6 +23,8 @@ const PORT = Number(process.env.PORT) || 4317;
 
 const db = new StatsDb(DATA_DIR);
 const runner = new CollectRunner(DATA_DIR);
+let replayWatchBusy = false;
+let playerCollectProgress: PlayerCollectProgress | null = null;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -136,21 +140,66 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, data);
       return;
     }
+    if (p === '/api/replay-watch' && req.method === 'POST') {
+      const matchId = url.searchParams.get('matchId');
+      if (!matchId) return sendJson(res, 400, { error: 'falta matchId' });
+      const parsed = parseMatchId(matchId);
+      if (!parsed) return sendJson(res, 400, { error: 'matchId inválido' });
+      if (replayWatchBusy) {
+        return sendJson(res, 409, { error: 'Ya hay un replay abriéndose. Espera a que termine.' });
+      }
+      replayWatchBusy = true;
+      console.log(`[lcu] Iniciando watch ${matchId}`);
+      try {
+        await lcuReplayWatch(parsed.gameId);
+        return sendJson(res, 200, { ok: true });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[lcu] Watch falló: ${msg}`);
+        return sendJson(res, 502, { error: msg });
+      } finally {
+        replayWatchBusy = false;
+      }
+    }
     if (p === '/api/download-replay' && req.method === 'GET') {
       const matchId = url.searchParams.get('matchId');
       if (!matchId) return sendJson(res, 400, { error: 'falta matchId' });
+      console.log(`[replay] Descargando ${matchId}…`);
+      // Intento 1: servidor espectador de Riot (funciona en regiones con servidor público)
       try {
         const buf = await downloadReplay(matchId);
+        console.log(`[replay] OK vía espectador ${matchId} — ${buf.length} bytes`);
         res.writeHead(200, {
           'Content-Type': 'application/octet-stream',
           'Content-Disposition': `attachment; filename="${matchId}.rofl"`,
           'Content-Length': String(buf.length),
         });
         res.end(buf);
-      } catch (err) {
-        sendJson(res, 502, { error: err instanceof Error ? err.message : String(err) });
+        return;
+      } catch (spectatorErr) {
+        console.warn(`[replay] Espectador falló, intentando LCU: ${spectatorErr instanceof Error ? spectatorErr.message : spectatorErr}`);
       }
-      return;
+      // Intento 2: LCU (cliente de LoL local)
+      const parsed = parseMatchId(matchId);
+      if (parsed) {
+        try {
+          await lcuReplayDownload(parsed.gameId);
+          console.log(`[replay] OK vía LCU ${matchId}`);
+          return sendJson(res, 200, {
+            lcu: true,
+            message: 'Descarga iniciada en el cliente de LoL. El replay aparecerá en tu carpeta de replays cuando termine.',
+          });
+        } catch (lcuErr) {
+          console.error(`[replay] LCU también falló: ${lcuErr instanceof Error ? lcuErr.message : lcuErr}`);
+          return sendJson(res, 502, {
+            error:
+              'No se pudo descargar el replay por ninguna vía.\n\n' +
+              '• Servidor espectador de Riot: no disponible para esta región (LA2).\n' +
+              '• Cliente de LoL: ' + (lcuErr instanceof Error ? lcuErr.message : String(lcuErr)),
+          });
+        }
+      }
+      return sendJson(res, 502, { error: 'matchId inválido o región no soportada.' });
     }
     if (p === '/api/streaks' && req.method === 'GET') {
       const region = url.searchParams.get('region');
@@ -166,6 +215,24 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
       const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
       sendJson(res, 200, await db.streaks(region, f, limit, offset));
+      return;
+    }
+    if (p === '/api/player-games' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      const puuid = url.searchParams.get('puuid');
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      if (!puuid) return sendJson(res, 400, { error: 'falta puuid' });
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        role: url.searchParams.get('role') || 'ALL',
+        champion: 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
+      };
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+      sendJson(res, 200, await db.playerGames(region, puuid, f, limit, offset));
       return;
     }
     if (p === '/api/item-games' && req.method === 'GET') {
@@ -202,6 +269,31 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, runner.status(region));
       return;
     }
+    if (p === '/api/collect-player/status' && req.method === 'GET') {
+      return sendJson(res, 200, playerCollectProgress ?? { phase: 'idle' });
+    }
+    if (p === '/api/collect-player' && req.method === 'POST') {
+      const body = await readBody(req);
+      const { region, apiKey, riotId, limit } = JSON.parse(body) as {
+        region: string; apiKey: string; riotId: string; limit: number;
+      };
+      if (!region || !apiKey || !riotId) return sendJson(res, 400, { error: 'faltan campos: region, apiKey, riotId' });
+      if (playerCollectProgress && !['done', 'error', 'idle'].includes(playerCollectProgress.phase)) {
+        return sendJson(res, 409, { error: 'Ya hay una recolección de jugador en curso.' });
+      }
+      const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
+      console.log(`[player-collect] ${riotId} en ${region}, hasta ${safeLimit} partidas`);
+      void collectPlayer(region, apiKey, riotId, safeLimit, DATA_DIR, (p) => {
+        playerCollectProgress = p;
+        console.log(`[player-collect] ${p.phase} ${p.downloaded}/${p.total}`);
+        if (p.phase === 'done') void db.reload(region);
+      }).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[player-collect] ERROR: ${msg}`);
+        playerCollectProgress = { phase: 'error', riotId, region, downloaded: 0, skipped: 0, total: 0, error: msg };
+      });
+      return sendJson(res, 202, { started: true });
+    }
     if (p === '/api/run' && req.method === 'POST') {
       const body = await readBody(req);
       let request: CollectRequest;
@@ -216,6 +308,17 @@ const server = http.createServer(async (req, res) => {
       // progreso por polling a /api/status. Al terminar, refresca la cache de la base.
       void runner.run(request).then(() => db.reload(request.region)).catch(() => {});
       sendJson(res, 202, { started: true });
+      return;
+    }
+    if (p === '/api/collect-history' && req.method === 'GET') {
+      const regions = db.regions();
+      const summaries = await Promise.all(
+        regions.map(async (region) => {
+          const m = await db.meta(region);
+          return { region, totalGames: m.totalGames, totalParticipants: m.totalParticipants, patches: m.patches };
+        }),
+      );
+      sendJson(res, 200, summaries);
       return;
     }
     if (p.startsWith('/api/')) return sendJson(res, 404, { error: 'no encontrado' });

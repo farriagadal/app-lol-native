@@ -24,8 +24,14 @@ export function Filters() {
     setChampText(s.champion === 'all' ? '' : s.champion);
   }, [s.champion]);
 
-  const onRegion = (v: string) => {
-    s.setRegion(v);
+  const selectedRegions = !s.region || s.region === 'all' ? [] : s.region.split(',');
+  const serverOptions = s.servers.filter((sv) => s.dataRegions.includes(sv.key)).map((sv) => sv.key);
+  const serverLabel = (key: string) => {
+    const sv = s.servers.find((x) => x.key === key);
+    return sv ? `${sv.label} (${sv.key})` : key;
+  };
+  const onRegionChange = (vals: string[]) => {
+    s.setRegion(vals.length ? vals.join(',') : 'all');
     navigate('/');
   };
 
@@ -45,21 +51,13 @@ export function Filters() {
     <section className="filters">
       <label>
         Servidor
-        {s.dataRegions.length ? (
-          <select value={s.region} onChange={(e) => onRegion(e.target.value)}>
-            {s.servers
-              .filter((sv) => s.dataRegions.includes(sv.key))
-              .map((sv) => (
-                <option key={sv.key} value={sv.key}>
-                  {sv.label} ({sv.key})
-                </option>
-              ))}
-          </select>
-        ) : (
-          <select disabled>
-            <option>— sin datos —</option>
-          </select>
-        )}
+        <MultiChipSelect
+          options={serverOptions}
+          value={selectedRegions}
+          onChange={onRegionChange}
+          placeholder="Todos"
+          getLabel={serverLabel}
+        />
       </label>
 
       <label>

@@ -1,12 +1,7 @@
-/**
- * Detalle de ítem: partidas en las que se usó, con paginador y filas que se
- * expanden mostrando el scoreboard completo (cargado bajo demanda). Portado de
- * loadItemView/renderItemGames/toggleGameRow del app.js.
- */
+/** Vista de jugador: historial de partidas guardadas + link a OP.GG. */
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  AssetImg,
   BuildRow,
   ChampionIcon,
   KDA,
@@ -14,12 +9,10 @@ import {
   RuneIcons,
   Scoreboard,
   SpellPair,
-  useAssets,
   ROLE_LABEL,
-  TIER_LABEL,
   type ItemStatRow,
   type ItemGameRow,
-  type ItemGamesResponse,
+  type PlayerGamesResponse,
   type MatchDetail,
 } from '@ui';
 import { api } from '../api';
@@ -27,7 +20,7 @@ import { useStore } from '../state/store';
 import { opggUrl } from '../opgg';
 import { watchReplay } from '../downloadReplay';
 
-const ITEM_PAGE = 50;
+const PAGE = 50;
 const matchCache = new Map<string, MatchDetail>();
 
 function cmpPatch(a: string, b: string): number {
@@ -43,43 +36,31 @@ function newestPatch(patches: (string | null)[]): string | null {
   }, null);
 }
 
-function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; region: string; item: number; showReplay: boolean; itemStats: Map<number, ItemStatRow> }) {
+function GameRow({ g, region, showReplay, itemStats }: { g: ItemGameRow; region: string; showReplay: boolean; itemStats: Map<number, ItemStatRow> }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<MatchDetail | null>(null);
-  const [error, setError] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
   const toggle = async () => {
-    if (open) {
-      setOpen(false);
-      return;
-    }
+    if (open) { setOpen(false); return; }
     setOpen(true);
-    if (detail || error) return;
+    if (detail || loadError) return;
     const cached = matchCache.get(g.matchId);
-    if (cached) {
-      setDetail(cached);
-      return;
-    }
+    if (cached) { setDetail(cached); return; }
     try {
       const data = await api.match(region, g.matchId);
       if (data && !(data as { error?: string }).error) {
         matchCache.set(g.matchId, data);
         setDetail(data);
-      } else {
-        setError(true);
-      }
-    } catch {
-      setError(true);
-    }
+      } else { setLoadError(true); }
+    } catch { setLoadError(true); }
   };
 
   return (
     <>
       <tr className={`ig-row ${g.win ? 'win' : 'lose'}`} onClick={toggle}>
-        <td className="ig-caret">
-          <span className="caret">{open ? '▾' : '▸'}</span>
-        </td>
+        <td className="ig-caret"><span className="caret">{open ? '▾' : '▸'}</span></td>
         <td>
           <span className="cell-ico">
             <ChampionIcon name={g.championName} lazy />
@@ -90,19 +71,11 @@ function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; r
           <RoleIcon role={g.role} className="role-ic" />
           <span>{ROLE_LABEL[g.role] || g.role || '—'}</span>
         </td>
-        <td>
-          <KDA k={g.kills} d={g.deaths} a={g.assists} kda={g.kda} />
-        </td>
+        <td><KDA k={g.kills} d={g.deaths} a={g.assists} kda={g.kda} /></td>
         <td className="num">{g.cs}</td>
-        <td>
-          <SpellPair s1={g.summoner1} s2={g.summoner2} />
-        </td>
-        <td>
-          <RuneIcons keystone={g.keystone} sub={g.subStyle} />
-        </td>
-        <td>
-          <BuildRow items={g.items} withTrinket highlight={item} itemStats={itemStats} />
-        </td>
+        <td><SpellPair s1={g.summoner1} s2={g.summoner2} /></td>
+        <td><RuneIcons keystone={g.keystone} sub={g.subStyle} /></td>
+        <td><BuildRow items={g.items} withTrinket itemStats={itemStats} /></td>
         <td className="num">{g.patch ?? '—'}</td>
         <td className="num">{new Date(g.gameCreation).toLocaleDateString('es-CL')}</td>
         <td>
@@ -121,10 +94,10 @@ function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; r
         <tr className="game-detail">
           <td colSpan={11}>
             <div className="detail-scroll">
-              {error ? (
+              {loadError ? (
                 <div className="empty">Error al cargar la partida.</div>
               ) : detail ? (
-                <Scoreboard match={detail} highlight={item} playerHref={(id) => opggUrl(id, region)} />
+                <Scoreboard match={detail} playerHref={(id) => opggUrl(id, region)} />
               ) : (
                 <div className="empty">Cargando partida…</div>
               )}
@@ -136,80 +109,80 @@ function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; r
   );
 }
 
-export function ItemView() {
-  const { id = '' } = useParams();
-  const item = Number(id);
+export function PlayerView() {
+  const { puuid = '' } = useParams();
   const s = useStore();
-  const a = useAssets();
-  const [resp, setResp] = useState<ItemGamesResponse | null>(null);
+  const [resp, setResp] = useState<PlayerGamesResponse | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [itemStatsMap, setItemStatsMap] = useState<Map<number, ItemStatRow>>(new Map());
 
-  // Reinicia la página al cambiar de ítem o de filtros.
-  useEffect(() => {
-    setOffset(0);
-  }, [item, s.region, s.patch, s.tier, s.role, s.champion]);
+  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo]);
 
   useEffect(() => {
     let cancel = false;
-    if (!s.region || !Number.isFinite(item)) {
-      setResp(null);
-      setLoading(false);
-      return;
-    }
+    if (!s.region || !puuid) { setResp(null); setLoading(false); return; }
     setLoading(true);
-    api
-      .itemGames(s.region, item, s.statFilter(s.champion), ITEM_PAGE, offset)
-      .then((r) => {
-        if (!cancel) {
-          setResp(r);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancel) {
-          setResp(null);
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancel = true;
-    };
-  }, [item, s.region, s.patch, s.tier, s.role, s.champion, offset]);
+    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter('all'), PAGE, offset)
+      .then((r) => { if (!cancel) { setResp(r); setLoading(false); } })
+      .catch(() => { if (!cancel) { setResp(null); setLoading(false); } });
+    return () => { cancel = true; };
+  }, [puuid, s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo, offset]);
 
   useEffect(() => {
     if (!s.region) { setItemStatsMap(new Map()); return; }
-    api.stats<ItemStatRow>('items', s.region, s.statFilter(s.champion))
+    api.stats<ItemStatRow>('items', s.region, s.statFilter('all'))
       .then((rows) => {
         const m = new Map<number, ItemStatRow>();
         for (const r of rows) m.set(r.item, r);
         setItemStatsMap(m);
       })
       .catch(() => {});
-  }, [s.region, s.patch, s.tier, s.role, s.champion]);
+  }, [s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo]);
 
-  const scope = (() => {
-    const role = s.role === 'ALL' ? 'todos los roles' : ROLE_LABEL[s.role] || s.role;
-    const tier = s.tier === 'all' ? 'todos los rangos' : TIER_LABEL[s.tier] || s.tier;
-    const champ = s.champion === 'all' ? 'todos los campeones' : s.champion;
-    return `${champ} · ${role} · ${tier} · parche ${s.patch === 'all' ? 'todos' : s.patch}`;
-  })();
-
-  const total = resp?.total || 0;
-  const games = resp?.games || [];
+  const total = resp?.total ?? 0;
+  const games = resp?.games ?? [];
+  const riotId = resp?.riotId ?? null;
   const newest = newestPatch(games.map((g) => g.patch));
+
+  const wins = games.filter((g) => g.win).length;
+  const winRatePct = games.length > 0 ? Math.round((wins / games.length) * 100) : 0;
+  const avgKda = games.length > 0
+    ? (games.reduce((s, g) => s + g.kda, 0) / games.length).toFixed(2)
+    : '—';
 
   return (
     <section>
       <div className="cv-header">
-        <AssetImg src={a.itemIcon(item)} />
-        <div>
-          <div className="name">{a.itemName(item)}</div>
+        <div className="player-avatar">
+          <span className="player-avatar-icon">👤</span>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className="name">{riotId ?? (puuid ? puuid.slice(0, 20) + '…' : '—')}</div>
           <div className="meta">
-            {scope} · <b>{total}</b> partidas
+            {total > 0
+              ? `${total} partidas guardadas · ${winRatePct}% victorias · KDA prom. ${avgKda}`
+              : 'Sin partidas para el filtro actual'}
           </div>
         </div>
+        {riotId && s.region && (
+          <a
+            className="opgg-btn"
+            href={opggUrl(riotId, s.region)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Ver en OP.GG"
+          >
+            <img
+              className="opgg-favicon"
+              src="https://www.op.gg/favicon.ico"
+              alt="OP.GG"
+              width={16}
+              height={16}
+            />
+            Ver en OP.GG
+          </a>
+        )}
       </div>
 
       <div className="table-host">
@@ -218,7 +191,7 @@ export function ItemView() {
         ) : loading ? (
           <div className="empty">Cargando…</div>
         ) : !games.length ? (
-          <div className="empty">Ninguna partida con este ítem para el filtro actual.</div>
+          <div className="empty">Sin partidas guardadas para este jugador con el filtro actual.</div>
         ) : (
           <table className="ig-table">
             <thead>
@@ -238,25 +211,29 @@ export function ItemView() {
             </thead>
             <tbody>
               {games.map((g) => (
-                <GameRow key={g.matchId} g={g} region={s.region} item={item} showReplay={g.patch === newest} itemStats={itemStatsMap} />
+                <GameRow key={g.matchId} g={g} region={s.region} showReplay={g.patch === newest} itemStats={itemStatsMap} />
               ))}
             </tbody>
           </table>
         )}
       </div>
 
-      {total > 0 && (
+      {total > PAGE && (
         <div className="iv-pager">
-          <button className="pager-btn" disabled={offset <= 0} onClick={() => setOffset(Math.max(0, offset - ITEM_PAGE))}>
+          <button
+            className="pager-btn"
+            disabled={offset <= 0}
+            onClick={() => setOffset(Math.max(0, offset - PAGE))}
+          >
             ← Anterior
           </button>
           <span className="pager-info">
-            {offset + 1}–{Math.min(offset + ITEM_PAGE, total)} de {total}
+            {offset + 1}–{Math.min(offset + PAGE, total)} de {total}
           </span>
           <button
             className="pager-btn"
-            disabled={offset + ITEM_PAGE >= total}
-            onClick={() => setOffset(offset + ITEM_PAGE)}
+            disabled={offset + PAGE >= total}
+            onClick={() => setOffset(offset + PAGE)}
           >
             Siguiente →
           </button>

@@ -11,16 +11,20 @@ interface Props {
   onChange: (v: string[]) => void;
   placeholder?: string;
   label?: string;
+  /** Transforma una clave interna en etiqueta visible (chips y dropdown). */
+  getLabel?: (v: string) => string;
 }
 
-export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos' }: Props) {
+export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos', getLabel }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const root = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
 
+  const label = (v: string) => (getLabel ? getLabel(v) : v);
+
   const filtered = options.filter(
-    (o) => !value.includes(o) && o.toLowerCase().includes(query.toLowerCase()),
+    (o) => !value.includes(o) && label(o).toLowerCase().includes(query.toLowerCase()),
   );
 
   const add = (opt: string) => {
@@ -68,12 +72,12 @@ export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos
         )}
         {value.map((v) => (
           <span key={v} className="mcs-chip">
-            {v}
+            {label(v)}
             <button
               className="mcs-chip-x"
               onClick={(e) => { e.stopPropagation(); remove(v); }}
               tabIndex={-1}
-              aria-label={`Quitar ${v}`}
+              aria-label={`Quitar ${label(v)}`}
             >×</button>
           </span>
         ))}
@@ -100,7 +104,7 @@ export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos
         <ul className="mcs-dropdown">
           {filtered.map((o) => (
             <li key={o} className="mcs-opt" onMouseDown={(e) => { e.preventDefault(); add(o); }}>
-              {o}
+              {label(o)}
             </li>
           ))}
         </ul>
