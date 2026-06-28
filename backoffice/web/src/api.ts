@@ -6,6 +6,7 @@ import type {
   ItemGamesResponse,
   MatchDetail,
   StatFilter,
+  StreaksResponse,
 } from '@ui';
 
 const qs = (params: Record<string, string | number | undefined>) =>
@@ -64,11 +65,32 @@ export const api = {
         }),
     ).then((r) => r.json()),
 
+  streaks: (
+    region: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<StreaksResponse> =>
+    fetch(
+      '/api/streaks?' +
+        qs({
+          region,
+          patch: f.patch,
+          tier: f.tier,
+          role: f.role,
+          champion: f.champion,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
+          limit,
+          offset,
+        }),
+    ).then((r) => r.json()),
+
   match: (region: string, matchId: string): Promise<MatchDetail> =>
     fetch('/api/match?' + qs({ region, matchId })).then((r) => r.json()),
 
   collect: (req: unknown): Promise<Response> =>
-    fetch('/api/collect', {
+    fetch('/api/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(req),

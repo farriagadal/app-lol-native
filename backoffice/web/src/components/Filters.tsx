@@ -1,13 +1,13 @@
 /**
  * Barra de filtros compartida (región, parche, rango, campeón, roles, fechas). El
  * campeón navega a su ficha (/champ/slug); si estamos en el detalle de un ítem,
- * solo refiltra sin salir. El parche y el campeón son inputs escribibles con
- * autocompletado (datalist). Las fechas (desde/hasta) filtran por game_creation.
+ * solo refiltra sin salir. Las fechas (desde/hasta) filtran por game_creation.
  */
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { RolePills, TierFilter } from '@ui';
 import { useStore } from '../state/store';
+import { MultiChipSelect } from './MultiChipSelect';
 
 export function Filters() {
   const s = useStore();
@@ -19,15 +19,10 @@ export function Filters() {
   const patches = s.meta?.patches ?? [];
 
   const [champText, setChampText] = useState(s.champion === 'all' ? '' : s.champion);
-  const [patchText, setPatchText] = useState(s.patch === 'all' ? '' : s.patch);
 
   useEffect(() => {
     setChampText(s.champion === 'all' ? '' : s.champion);
   }, [s.champion]);
-
-  useEffect(() => {
-    setPatchText(s.patch === 'all' ? '' : s.patch);
-  }, [s.patch]);
 
   const onRegion = (v: string) => {
     s.setRegion(v);
@@ -43,31 +38,22 @@ export function Filters() {
     navigate(match ? `/champ/${encodeURIComponent(match.toLowerCase())}` : '/');
   };
 
-  const commitPatch = () => {
-    const v = patchText.trim();
-    const match = patches.find((p) => p === v);
-    if (!v) {
-      s.setPatch('all');
-    } else if (match) {
-      s.setPatch(match);
-    } else {
-      // Texto no coincide con ningún parche conocido — resetear
-      s.setPatch('all');
-      setPatchText('');
-    }
-  };
+  const selectedPatches = !s.patch || s.patch === 'all' ? [] : s.patch.split(',');
+  const onPatchChange = (vals: string[]) => s.setPatch(vals.length ? vals.join(',') : 'all');
 
   return (
     <section className="filters">
       <label>
-        Región
+        Servidor
         {s.dataRegions.length ? (
           <select value={s.region} onChange={(e) => onRegion(e.target.value)}>
-            {s.dataRegions.map((r) => (
-              <option key={r} value={r}>
-                {r.toUpperCase()}
-              </option>
-            ))}
+            {s.servers
+              .filter((sv) => s.dataRegions.includes(sv.key))
+              .map((sv) => (
+                <option key={sv.key} value={sv.key}>
+                  {sv.label} ({sv.key})
+                </option>
+              ))}
           </select>
         ) : (
           <select disabled>
@@ -78,21 +64,12 @@ export function Filters() {
 
       <label>
         Parche
-        <input
-          list="patchList"
+        <MultiChipSelect
+          options={patches}
+          value={selectedPatches}
+          onChange={onPatchChange}
           placeholder="Todos"
-          value={patchText}
-          onChange={(e) => setPatchText(e.target.value)}
-          onBlur={commitPatch}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
         />
-        <datalist id="patchList">
-          {patches.map((p) => (
-            <option key={p} value={p} />
-          ))}
-        </datalist>
       </label>
 
       <label>

@@ -23,6 +23,8 @@ import {
 } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
+import { opggUrl } from '../opgg';
+import { downloadReplay } from '../downloadReplay';
 
 const ITEM_PAGE = 50;
 // Cache en memoria de partidas ya cargadas (compartida entre filas).
@@ -32,6 +34,7 @@ function GameRow({ g, region, item }: { g: ItemGameRow; region: string; item: nu
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<MatchDetail | null>(null);
   const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const toggle = async () => {
     if (open) {
@@ -87,20 +90,29 @@ function GameRow({ g, region, item }: { g: ItemGameRow; region: string; item: nu
         <td>
           <BuildRow items={g.items} withTrinket highlight={item} />
         </td>
+        <td className="num">{new Date(g.gameCreation).toLocaleDateString('es-CL')}</td>
         <td>
           <span className={`result ${g.win ? 'win' : 'lose'}`}>{g.win ? 'Victoria' : 'Derrota'}</span>
+          <button
+            className="dl-btn"
+            title="Descargar replay (.rofl) para ver en el cliente de LoL"
+            disabled={downloading}
+            onClick={(e) => { e.stopPropagation(); void downloadReplay(g.matchId, setDownloading); }}
+          >{downloading ? '…' : '▶'}</button>
         </td>
       </tr>
       {open && (
         <tr className="game-detail">
-          <td colSpan={9}>
-            {error ? (
-              <div className="empty">Error al cargar la partida.</div>
-            ) : detail ? (
-              <Scoreboard match={detail} highlight={item} />
-            ) : (
-              <div className="empty">Cargando partida…</div>
-            )}
+          <td colSpan={10}>
+            <div className="detail-scroll">
+              {error ? (
+                <div className="empty">Error al cargar la partida.</div>
+              ) : detail ? (
+                <Scoreboard match={detail} highlight={item} playerHref={(id) => opggUrl(id, region)} />
+              ) : (
+                <div className="empty">Cargando partida…</div>
+              )}
+            </div>
           </td>
         </tr>
       )}
@@ -190,6 +202,7 @@ export function ItemView() {
                 <th>Hechizos</th>
                 <th>Runas</th>
                 <th>Build</th>
+                <th>Fecha</th>
                 <th>Resultado</th>
               </tr>
             </thead>

@@ -1,9 +1,15 @@
+// El antivirus o proxy del equipo puede interceptar TLS con su propio cert,
+// que Node.js no tiene en su almacén (distinto del de Windows). Para un
+// servidor local que solo llama a api.riotgames.com esto es aceptable.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { StatsDb } from './db';
 import { CollectRunner } from './collectRunner';
 import { REGIONS } from '../collector/config';
+import { downloadReplay } from './replayDownloader';
 import type { CollectRequest } from './types';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -130,6 +136,38 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, data);
       return;
     }
+    if (p === '/api/download-replay' && req.method === 'GET') {
+      const matchId = url.searchParams.get('matchId');
+      if (!matchId) return sendJson(res, 400, { error: 'falta matchId' });
+      try {
+        const buf = await downloadReplay(matchId);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${matchId}.rofl"`,
+          'Content-Length': String(buf.length),
+        });
+        res.end(buf);
+      } catch (err) {
+        sendJson(res, 502, { error: err instanceof Error ? err.message : String(err) });
+      }
+      return;
+    }
+    if (p === '/api/streaks' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        role: url.searchParams.get('role') || 'ALL',
+        champion: url.searchParams.get('champion') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
+      };
+      const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+      sendJson(res, 200, await db.streaks(region, f, limit, offset));
+      return;
+    }
     if (p === '/api/item-games' && req.method === 'GET') {
       const region = url.searchParams.get('region');
       const item = Number(url.searchParams.get('item'));
@@ -164,7 +202,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, runner.status(region));
       return;
     }
-    if (p === '/api/collect' && req.method === 'POST') {
+    if (p === '/api/run' && req.method === 'POST') {
       const body = await readBody(req);
       let request: CollectRequest;
       try {

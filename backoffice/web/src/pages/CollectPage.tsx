@@ -1,8 +1,8 @@
 /**
- * Página de recolección: formulario, rangos a recolectar y seguimiento del
- * progreso por polling de /api/status. Portado de runCollect/pollCollect/
- * onProgress/showStatus del app.js. La recolección corre en el servidor con
- * independencia de esta página.
+ * Página de recolección: formulario, rangos y servidores a recolectar y
+ * seguimiento del progreso por polling de /api/status. La recolección corre
+ * en el servidor con independencia de esta página. Si se eligen varios
+ * servidores, se ejecutan secuencialmente.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ProgressBar, TierPills, TIERS, type CollectProgress, type CollectStatus } from '@ui';
@@ -11,9 +11,21 @@ import { LS, useStore } from '../state/store';
 
 const ALL_TIERS = TIERS.map((t) => t[0]);
 
+interface BaseReq {
+  apiKey: string;
+  maxMatches: number;
+  matchesPerPlayer: number;
+  maxPlayersPerBucket: number;
+  tiers: string[];
+  startTime?: number;
+  endTime?: number;
+}
+
 export function CollectPage() {
   const s = useStore();
-  const [server, setServer] = useState(() => LS.get('server', 'la2'));
+  const [collectServers, setCollectServers] = useState<string[]>(() =>
+    LS.get('collectServers', 'la2').split(',').filter(Boolean),
+  );
   const [apiKey, setApiKey] = useState(() => LS.get('apiKey', ''));
   const [max, setMax] = useState(() => LS.get('max', '500'));
   const [perPlayer, setPerPlayer] = useState(() => LS.get('perPlayer', '15'));
@@ -46,61 +58,89 @@ export function CollectPage() {
     }
   }, []);
 
-  const onProgress = useCallback((ev: CollectProgress) => {
+  const onProgress = useCallback((ev: CollectProgress, serverTag?: string) => {
     const frac = ev.target ? Math.min(1, ev.collected / ev.target) : 0;
+    const tag = serverTag ? ` [${serverTag}]` : '';
     const labels: Record<CollectProgress['phase'], string> = {
-      starting: 'Iniciando…',
-      collecting: `Recolectando ${ev.collected}/${ev.target}${ev.bucket ? ' · ' + ev.bucket : ''}`,
-      'building-db': 'Construyendo base SQLite…',
-      done: `Listo · ${ev.collected} partidas`,
+      starting: `Iniciando${tag}…`,
+      collecting: `Recolectando${tag} ${ev.collected}/${ev.target}${ev.bucket ? ' · ' + ev.bucket : ''}`,
+      'building-db': `Construyendo base SQLite${tag}…`,
+      done: `Listo${tag} · ${ev.collected} partidas`,
       error: 'Error: ' + (ev.message || ''),
     };
     setProgress({ frac, text: labels[ev.phase] || ev.phase });
   }, []);
 
-  // Polling hasta que termina. region = servidor en recolección.
-  const poll = useCallback(
-    async (region: string) => {
+  // Polling de un servidor; al terminar avanza al siguiente de la cola.
+  const pollQueue = useCallback(
+    async (queue: string[], idx: number, req: BaseReq) => {
+      const region = queue[idx];
+      const serverTag = queue.length > 1 ? `${region} ${idx + 1}/${queue.length}` : region;
       let st: CollectStatus;
       try {
         st = await api.status(region);
       } catch {
-        pollTimer.current = window.setTimeout(() => poll(region), 2000);
+        pollTimer.current = window.setTimeout(() => pollQueue(queue, idx, req), 2000);
         return;
       }
-      if (st.progress) onProgress(st.progress);
+      if (st.progress) onProgress(st.progress, serverTag);
       showStatus(st);
       if (st.running) {
-        pollTimer.current = window.setTimeout(() => poll(region), 1500);
+        pollTimer.current = window.setTimeout(() => pollQueue(queue, idx, req), 1500);
         return;
       }
-      // Terminado: refrescar catálogos y activar la región recolectada.
-      setCollecting(false);
+      // Este servidor terminó: refrescar catálogos.
       await s.reloadRegions();
       s.setRegion(region);
+      const next = idx + 1;
+      if (next < queue.length) {
+        // Lanzar el siguiente servidor de la cola.
+        const nextRegion = queue[next];
+        setProgress({ frac: 0, text: `Iniciando [${nextRegion} ${next + 1}/${queue.length}]…` });
+        try {
+          const res = await api.collect({ ...req, region: nextRegion });
+          if (!res.ok && res.status !== 202) throw new Error('HTTP ' + res.status);
+          pollQueue(queue, next, req);
+        } catch (err) {
+          setProgress({ frac: 0, text: 'Error al lanzar: ' + (err instanceof Error ? err.message : String(err)) });
+          setCollecting(false);
+        }
+      } else {
+        setCollecting(false);
+      }
     },
     [onProgress, showStatus, s],
   );
 
-  // Estado inicial del servidor seleccionado; reanuda si ya hay algo en curso.
+  // Estado inicial del primer servidor seleccionado; reanuda si hay algo en curso.
   useEffect(() => {
+    const firstServer = collectServers[0];
+    if (!firstServer) return;
     let cancel = false;
-    api.status(server).then((st) => {
+    api.status(firstServer).then((st) => {
       if (cancel) return;
       showStatus(st);
       if (st.running && !collecting) {
         setCollecting(true);
         setProgress({ frac: 0, text: 'Recolectando…' });
-        poll(server);
+        // Reanuda solo el primer servidor (no sabemos la cola original).
+        pollQueue([firstServer], 0, { apiKey: '', maxMatches: 0, matchesPerPlayer: 0, maxPlayersPerBucket: 0, tiers: [] });
       }
     });
     return () => {
       cancel = true;
       if (pollTimer.current) window.clearTimeout(pollTimer.current);
     };
-    // Solo al cambiar de servidor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server]);
+  }, [collectServers[0]]);
+
+  const toggleServer = (key: string) => {
+    setCollectServers((cur) => {
+      const next = cur.includes(key) ? cur.filter((x) => x !== key) : [...cur, key];
+      LS.set('collectServers', next.join(','));
+      return next;
+    });
+  };
 
   const toggleTier = (t: string) => {
     setTiers((cur) => {
@@ -112,6 +152,10 @@ export function CollectPage() {
 
   const run = async () => {
     if (collecting) return;
+    if (!collectServers.length) {
+      alert('Elige al menos un servidor a recolectar.');
+      return;
+    }
     if (!tiers.length) {
       alert('Elige al menos un rango a recolectar.');
       return;
@@ -123,8 +167,7 @@ export function CollectPage() {
     }
     const startTime = collectFrom ? Math.floor(new Date(collectFrom).getTime() / 1000) : undefined;
     const endTime = collectTo ? Math.floor(new Date(collectTo + 'T23:59:59').getTime() / 1000) : undefined;
-    const req = {
-      region: server,
+    const baseReq: BaseReq = {
       apiKey: key,
       maxMatches: Number(max) || 100,
       matchesPerPlayer: Number(perPlayer) || 15,
@@ -133,20 +176,20 @@ export function CollectPage() {
       startTime,
       endTime,
     };
-    LS.set('server', server);
     LS.set('apiKey', key);
-    LS.set('max', String(req.maxMatches));
-    LS.set('perPlayer', String(req.matchesPerPlayer));
-    LS.set('bucket', String(req.maxPlayersPerBucket));
+    LS.set('max', String(baseReq.maxMatches));
+    LS.set('perPlayer', String(baseReq.matchesPerPlayer));
+    LS.set('bucket', String(baseReq.maxPlayersPerBucket));
     LS.set('collectFrom', collectFrom);
     LS.set('collectTo', collectTo);
 
+    const queue = [...collectServers];
     setCollecting(true);
     setProgress({ frac: 0, text: 'Iniciando…' });
     try {
-      const res = await api.collect(req);
+      const res = await api.collect({ ...baseReq, region: queue[0] });
       if (!res.ok && res.status !== 202) throw new Error('HTTP ' + res.status);
-      poll(server);
+      pollQueue(queue, 0, baseReq);
     } catch (err) {
       setProgress({ frac: 0, text: 'Error al lanzar: ' + (err instanceof Error ? err.message : String(err)) });
       setCollecting(false);
@@ -161,16 +204,6 @@ export function CollectPage() {
           <span className={statusClass}>{statusText}</span>
         </div>
         <div className="form-grid">
-          <label>
-            Servidor
-            <select value={server} onChange={(e) => setServer(e.target.value)}>
-              {s.servers.map((sv) => (
-                <option key={sv.key} value={sv.key}>
-                  {sv.label} ({sv.key})
-                </option>
-              ))}
-            </select>
-          </label>
           <label>
             API key de Riot
             <input
@@ -212,6 +245,25 @@ export function CollectPage() {
           <button className="btn-primary" disabled={collecting} onClick={run}>
             {collecting ? 'Recolectando…' : 'Recolectar'}
           </button>
+        </div>
+        <div className="tier-row">
+          <span className="tier-label">Servidores a recolectar</span>
+          <div className="server-pills">
+            {s.servers.map((sv) => (
+              <span
+                key={sv.key}
+                className={'server-pill' + (collectServers.includes(sv.key) ? ' on' : '')}
+                title={sv.label}
+                onClick={() => toggleServer(sv.key)}
+              >
+                {sv.label}
+                <span className="server-pill-key">{sv.key}</span>
+              </span>
+            ))}
+          </div>
+          <span className="tier-hint">
+            Con varios servidores se recolectan <b>secuencialmente</b> en el orden elegido.
+          </span>
         </div>
         <div className="tier-row">
           <span className="tier-label">Rangos a recolectar</span>

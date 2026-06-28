@@ -144,7 +144,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (cancel) return;
       setMeta(m);
       setDdVersion(m.ddragonVersion);
-      if (patch !== 'all' && !m.patches.includes(patch)) setPatch('all');
+      if (patch !== 'all' && patch) {
+        const valid = patch.split(',').filter((p) => m.patches.includes(p));
+        if (!valid.length) setPatch('all');
+        else if (valid.join(',') !== patch) setPatch(valid.join(','));
+      }
       if (tier !== 'all' && !(m.tiers || []).includes(tier)) setTier('all');
       if (champion !== 'all' && !(m.champions || []).includes(champion)) setChampion('all');
     });

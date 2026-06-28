@@ -160,6 +160,24 @@ export interface MatchDetail {
   teams: MatchTeamObjectives[];
 }
 
+export interface StreakPlayer {
+  puuid: string;
+  riotId: string;
+  longestWinStreak: number;
+  totalGames: number;
+  wins: number;
+}
+
+export interface StreakGameRow extends ItemGameRow {
+  puuid: string;
+}
+
+export interface StreaksResponse {
+  total: number;
+  players: StreakPlayer[];
+  matches: StreakGameRow[];
+}
+
 export interface CollectRequest {
   region: string;
   apiKey: string;

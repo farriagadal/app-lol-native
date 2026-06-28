@@ -9,12 +9,14 @@ import { StatsPage } from './pages/StatsPage';
 import { CollectPage } from './pages/CollectPage';
 import { ChampionView } from './pages/ChampionView';
 import { ItemView } from './pages/ItemView';
+import { StreaksPage } from './pages/StreaksPage';
 
 const TABS: SidebarTab[] = [
   { key: 'champions', label: 'Campeones' },
   { key: 'items', label: 'Items' },
   { key: 'runes', label: 'Runas' },
   { key: 'spells', label: 'Hechizos' },
+  { key: 'streaks', label: 'Rachas' },
   { key: 'collect', label: '⬇ Recolección', className: 'tab-collect' },
 ];
 const VALID = new Set(TABS.map((t) => t.key));
@@ -27,6 +29,8 @@ function TabPage({ tab }: { tab: string }) {
       return <StatsPage kind="runes" />;
     case 'spells':
       return <StatsPage kind="spells" />;
+    case 'streaks':
+      return <StreaksPage />;
     case 'collect':
       return <CollectPage />;
     default:

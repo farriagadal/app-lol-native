@@ -16,6 +16,9 @@ import type {
   MatchDetail,
   MatchParticipantRow,
   MatchTeamObjectives,
+  StreakPlayer,
+  StreakGameRow,
+  StreaksResponse,
 } from './types';
 
 // Versión usada solo si no hay red ni caché en disco; en cuanto haya internet
@@ -169,10 +172,27 @@ export class StatsDb {
     };
   }
 
+  private parsePatch(patch: string): string[] {
+    if (!patch || patch === 'all') return [];
+    return patch.split(',').filter(Boolean);
+  }
+
+  private patchClause(patches: string[], alias = 'm'): string {
+    if (!patches.length) return '1=1';
+    return `${alias}.patch IN (${patches.map((_, i) => `$p${i}`).join(', ')})`;
+  }
+
+  private patchBindings(patches: string[]): Record<string, string> {
+    const r: Record<string, string> = {};
+    patches.forEach((p, i) => { r[`$p${i}`] = p; });
+    return r;
+  }
+
   /** WHERE compartido por las páginas de items/runas/hechizos. */
   private scopeParams(f: StatFilter): Record<string, string> {
+    const patches = this.parsePatch(f.patch);
     return {
-      $patch: f.patch,
+      ...this.patchBindings(patches),
       $tier: f.tier,
       $role: f.role,
       $champion: f.champion,
@@ -180,13 +200,16 @@ export class StatsDb {
       $dateTo: f.dateTo ?? '',
     };
   }
+
   private get dateWhere(): string {
     return `($dateFrom = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') >= $dateFrom)
       AND ($dateTo = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') <= $dateTo)`;
   }
-  private get scopeWhere(): string {
+
+  private scopeClause(f: StatFilter): string {
+    const patches = this.parsePatch(f.patch);
     return `p.team_position <> ''
-      AND ($patch = 'all' OR m.patch = $patch)
+      AND (${this.patchClause(patches)})
       AND ($tier = 'all' OR m.tier = $tier)
       AND ($role = 'ALL' OR p.team_position = $role)
       AND ($champion = 'all' OR p.champion_name = $champion)
@@ -200,7 +223,7 @@ export class StatsDb {
       WITH scope AS (
         SELECT p.win win, p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6
         FROM participants p JOIN matches m ON m.match_id = p.match_id
-        WHERE ${this.scopeWhere}
+        WHERE ${this.scopeClause(f)}
       ),
       tot AS (SELECT COUNT(*) c FROM scope),
       it AS (
@@ -240,7 +263,7 @@ export class StatsDb {
     if (!db) return { total: 0, games: [] };
     const itemWhere = `(p.item0 = $item OR p.item1 = $item OR p.item2 = $item
       OR p.item3 = $item OR p.item4 = $item OR p.item5 = $item OR p.item6 = $item)`;
-    const where = `${this.scopeWhere} AND ${itemWhere}`;
+    const where = `${this.scopeClause(f)} AND ${itemWhere}`;
     const params = { ...this.scopeParams(f), $item: String(item) };
 
     const totalRes = this.rows(
@@ -361,7 +384,7 @@ export class StatsDb {
         SELECT p.win win,
           MIN(p.summoner1_id, p.summoner2_id) s1, MAX(p.summoner1_id, p.summoner2_id) s2
         FROM participants p JOIN matches m ON m.match_id = p.match_id
-        WHERE ${this.scopeWhere} AND p.summoner1_id > 0 AND p.summoner2_id > 0
+        WHERE ${this.scopeClause(f)} AND p.summoner1_id > 0 AND p.summoner2_id > 0
       ),
       tot AS (SELECT COUNT(*) c FROM scope)
       SELECT s1, s2, COUNT(*) games, SUM(win) wins, ROUND(AVG(win), 4) win_rate,
@@ -385,7 +408,7 @@ export class StatsDb {
       WITH scope AS (
         SELECT p.puuid, p.riot_id, p.win, p.kda
         FROM participants p JOIN matches m ON m.match_id = p.match_id
-        WHERE ${this.scopeWhere}
+        WHERE ${this.scopeClause(f)}
       )
       SELECT MAX(riot_id) riot_id, COUNT(*) games, SUM(win) wins,
              ROUND(AVG(win), 4) win_rate, ROUND(AVG(kda), 2) kda
@@ -403,6 +426,8 @@ export class StatsDb {
   async counterStats(region: string, f: StatFilter): Promise<CounterStatRow[]> {
     const db = await this.open(region);
     if (!db || f.champion === 'all') return [];
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
     const sql = `
       WITH base AS (
         SELECT p1.win win, p2.champion_name opp
@@ -412,7 +437,7 @@ export class StatsDb {
           AND p2.team_id <> p1.team_id
         JOIN matches m ON m.match_id = p1.match_id
         WHERE p1.champion_name = $champion AND p1.team_position <> ''
-          AND ($patch = 'all' OR m.patch = $patch)
+          AND (${patchW})
           AND ($tier = 'all' OR m.tier = $tier)
           AND ($role = 'ALL' OR p1.team_position = $role)
       ),
@@ -434,6 +459,8 @@ export class StatsDb {
   async synergyStats(region: string, f: StatFilter): Promise<SynergyStatRow[]> {
     const db = await this.open(region);
     if (!db || f.champion === 'all') return [];
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
     const sql = `
       WITH base AS (
         SELECT p1.win win, p2.champion_name mate
@@ -443,7 +470,7 @@ export class StatsDb {
           AND p2.participant_id <> p1.participant_id
         JOIN matches m ON m.match_id = p1.match_id
         WHERE p1.champion_name = $champion AND p1.team_position <> ''
-          AND ($patch = 'all' OR m.patch = $patch)
+          AND (${patchW})
           AND ($tier = 'all' OR m.tier = $tier)
           AND ($role = 'ALL' OR p1.team_position = $role)
       ),
@@ -468,7 +495,7 @@ export class StatsDb {
       WITH scope AS (
         SELECT p.win win, p.keystone, p.primary_style, p.sub_style
         FROM participants p JOIN matches m ON m.match_id = p.match_id
-        WHERE ${this.scopeWhere} AND p.keystone IS NOT NULL
+        WHERE ${this.scopeClause(f)} AND p.keystone IS NOT NULL
       ),
       tot AS (SELECT COUNT(*) c FROM scope)
       SELECT keystone, primary_style, sub_style, COUNT(*) games, SUM(win) wins,
@@ -490,18 +517,20 @@ export class StatsDb {
     const db = await this.open(region);
     if (!db) return [];
 
+    const patches = this.parsePatch(patch);
+    const patchW = this.patchClause(patches);
     const dateW = `($dateFrom = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') >= $dateFrom)
         AND ($dateTo = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') <= $dateTo)`;
     const sql = `
       WITH tg AS (
         SELECT COUNT(*) c FROM matches m
-        WHERE ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+        WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
           AND ${dateW}
       ),
       bn AS (
         SELECT b.champion_name cn, COUNT(*) c
         FROM bans b JOIN matches m ON m.match_id = b.match_id
-        WHERE ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+        WHERE (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
           AND ${dateW}
         GROUP BY b.champion_name
       )
@@ -515,11 +544,11 @@ export class StatsDb {
                    * 1.0 / (SELECT c FROM tg), 4) AS ban_rate
       FROM participants p JOIN matches m ON m.match_id = p.match_id
       WHERE p.team_position <> ''
-        AND ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+        AND (${patchW}) AND ($tier = 'all' OR m.tier = $tier)
         AND ${dateW}
       GROUP BY p.champion_name, p.team_position`;
 
-    return this.rows(db.exec(sql, { $patch: patch, $tier: tier, $dateFrom: dateFrom, $dateTo: dateTo })).map((r) => ({
+    return this.rows(db.exec(sql, { ...this.patchBindings(patches), $tier: tier, $dateFrom: dateFrom, $dateTo: dateTo })).map((r) => ({
       championName: String(r.champion_name),
       role: String(r.role),
       games: Number(r.games),
@@ -528,5 +557,103 @@ export class StatsDb {
       pickRate: Number(r.pick_rate),
       banRate: Number(r.ban_rate),
     }));
+  }
+
+  /**
+   * Jugadores con rachas de victorias más largas en el scope filtrado.
+   * Devuelve paginación por jugadores + todas sus partidas (para resaltar la racha).
+   */
+  async streaks(
+    region: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<StreaksResponse> {
+    const db = await this.open(region);
+    if (!db) return { total: 0, players: [], matches: [] };
+
+    const params = this.scopeParams(f);
+
+    const playerSql = `
+      WITH scoped AS (
+        SELECT p.puuid, p.riot_id, p.win, m.game_creation
+        FROM participants p JOIN matches m ON m.match_id = p.match_id
+        WHERE ${this.scopeClause(f)}
+      ),
+      rn AS (
+        SELECT puuid, win, game_creation,
+          ROW_NUMBER() OVER (PARTITION BY puuid ORDER BY game_creation) -
+          ROW_NUMBER() OVER (PARTITION BY puuid, win ORDER BY game_creation) AS grp
+        FROM scoped
+      ),
+      streak_sizes AS (
+        SELECT puuid, win, grp, COUNT(*) len FROM rn GROUP BY puuid, win, grp
+      ),
+      player_win_streak AS (
+        SELECT puuid, MAX(len) longest_win_streak
+        FROM streak_sizes WHERE win = 1 GROUP BY puuid
+      ),
+      player_totals AS (
+        SELECT puuid, MAX(riot_id) riot_id, COUNT(*) total_games, SUM(win) wins
+        FROM scoped GROUP BY puuid
+      ),
+      player_stats AS (
+        SELECT t.puuid, t.riot_id, t.total_games, t.wins,
+               COALESCE(w.longest_win_streak, 0) longest_win_streak
+        FROM player_totals t LEFT JOIN player_win_streak w ON w.puuid = t.puuid
+      )
+      SELECT (SELECT COUNT(*) FROM player_stats) total_count, p.*
+      FROM player_stats p
+      ORDER BY p.longest_win_streak DESC, p.total_games DESC
+      LIMIT ${Number(limit)} OFFSET ${Number(offset)}`;
+
+    const playerRows = this.rows(db.exec(playerSql, params));
+    const total = Number(playerRows[0]?.total_count ?? 0);
+    const players: StreakPlayer[] = playerRows.map((r) => ({
+      puuid: String(r.puuid),
+      riotId: r.riot_id == null ? '' : String(r.riot_id),
+      longestWinStreak: Number(r.longest_win_streak),
+      totalGames: Number(r.total_games),
+      wins: Number(r.wins),
+    }));
+
+    if (!players.length) return { total, players, matches: [] };
+
+    // Embebemos los puuids directamente (vienen de nuestra propia BD, no de usuario).
+    const puuidList = players.map((p) => `'${p.puuid.replace(/'/g, "''")}'`).join(',');
+    const matchSql = `
+      SELECT p.puuid, m.match_id, p.champion_name, p.team_position, p.win,
+             p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
+             m.game_duration, m.game_creation, m.tier,
+             p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,
+             p.keystone, p.primary_style, p.sub_style, p.summoner1_id, p.summoner2_id
+      FROM participants p JOIN matches m ON m.match_id = p.match_id
+      WHERE p.puuid IN (${puuidList}) AND ${this.scopeClause(f)}
+      ORDER BY p.puuid, m.game_creation DESC`;
+
+    const matches: StreakGameRow[] = this.rows(db.exec(matchSql, params)).map((r) => ({
+      puuid: String(r.puuid),
+      matchId: String(r.match_id),
+      championName: String(r.champion_name),
+      role: String(r.team_position),
+      win: Number(r.win) === 1,
+      kills: Number(r.kills),
+      deaths: Number(r.deaths),
+      assists: Number(r.assists),
+      kda: Number(r.kda ?? 0),
+      cs: Number(r.cs ?? 0),
+      gameDuration: Number(r.game_duration ?? 0),
+      gameCreation: Number(r.game_creation ?? 0),
+      tier: r.tier == null ? null : String(r.tier),
+      items: [r.item0, r.item1, r.item2, r.item3, r.item4, r.item5, r.item6].map((x) => Number(x ?? 0)),
+      keystone: r.keystone == null ? null : Number(r.keystone),
+      primaryStyle: r.primary_style == null ? null : Number(r.primary_style),
+      subStyle: r.sub_style == null ? null : Number(r.sub_style),
+      summoner1: r.summoner1_id == null ? null : Number(r.summoner1_id),
+      summoner2: r.summoner2_id == null ? null : Number(r.summoner2_id),
+      killParticipation: r.kill_participation == null ? null : Number(r.kill_participation),
+    }));
+
+    return { total, players, matches };
   }
 }

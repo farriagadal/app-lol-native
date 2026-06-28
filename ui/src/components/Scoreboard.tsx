@@ -8,7 +8,11 @@ import { BuildRow } from './GameBits';
 const TEAM_TONE: Record<number, 'blue' | 'red'> = { 100: 'blue', 200: 'red' };
 const TEAM_NAME: Record<number, string> = { 100: 'Equipo azul', 200: 'Equipo rojo' };
 
-export function Scoreboard({ match, highlight }: { match: MatchDetail; highlight?: number | null }) {
+export function Scoreboard({ match, highlight, playerHref }: {
+  match: MatchDetail;
+  highlight?: number | null;
+  playerHref?: (riotId: string) => string;
+}) {
   const a = useAssets();
   const parts = match.participants || [];
   const maxDmg = Math.max(1, ...parts.map((p) => p.dmgToChamps || 0));
@@ -33,9 +37,20 @@ export function Scoreboard({ match, highlight }: { match: MatchDetail; highlight
             <AssetImg src={a.spellIcon(p.summoner2)} title={a.spellName(p.summoner2)} />
           </span>
           <AssetImg className="sb-ks" src={a.runeIcon(p.keystone)} title={a.runeName(p.keystone)} />
-          <span className="sb-name" title={p.riotId || ''}>
-            {name}
-          </span>
+          {playerHref && p.riotId ? (
+            <a
+              className="sb-name sb-name-link"
+              href={playerHref(p.riotId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={p.riotId}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {name}
+            </a>
+          ) : (
+            <span className="sb-name" title={p.riotId || ''}>{name}</span>
+          )}
         </div>
         <div className="sb-kda num">
           {p.kills} / {p.deaths} / {p.assists} <span className="kda-r">{kdaFixed(p.kda)}</span>
