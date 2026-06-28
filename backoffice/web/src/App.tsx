@@ -1,0 +1,95 @@
+/** Layout principal: sidebar + topbar + filtros + rutas. Porta showView/switchPage. */
+import { useEffect, useState } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Sidebar, type SidebarTab } from '@ui';
+import { LS, useStore } from './state/store';
+import { Filters } from './components/Filters';
+import { ChampionsPage } from './pages/ChampionsPage';
+import { StatsPage } from './pages/StatsPage';
+import { CollectPage } from './pages/CollectPage';
+import { ChampionView } from './pages/ChampionView';
+import { ItemView } from './pages/ItemView';
+
+const TABS: SidebarTab[] = [
+  { key: 'champions', label: 'Campeones' },
+  { key: 'items', label: 'Items' },
+  { key: 'runes', label: 'Runas' },
+  { key: 'spells', label: 'Hechizos' },
+  { key: 'collect', label: '⬇ Recolección', className: 'tab-collect' },
+];
+const VALID = new Set(TABS.map((t) => t.key));
+
+function TabPage({ tab }: { tab: string }) {
+  switch (tab) {
+    case 'items':
+      return <StatsPage kind="items" />;
+    case 'runes':
+      return <StatsPage kind="runes" />;
+    case 'spells':
+      return <StatsPage kind="spells" />;
+    case 'collect':
+      return <CollectPage />;
+    default:
+      return <ChampionsPage />;
+  }
+}
+
+export function App() {
+  const s = useStore();
+  const navigate = useNavigate();
+  const loc = useLocation();
+  const [tab, setTab] = useState(() => {
+    const t = LS.get('page', 'champions');
+    return VALID.has(t) ? t : 'champions';
+  });
+
+  // Sin datos: lo único accionable es recolectar.
+  useEffect(() => {
+    if (s.ready && !s.dataRegions.length) selectTab('collect');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [s.ready, s.dataRegions.length]);
+
+  const selectTab = (t: string) => {
+    setTab(t);
+    LS.set('page', t);
+    s.setChampion('all');
+    navigate('/');
+  };
+
+  const atRoot = loc.pathname === '/';
+  const onCollect = atRoot && tab === 'collect';
+  const active = atRoot ? tab : ''; // ninguna pestaña activa en ficha/detalle
+
+  const m = s.meta;
+  const metaLine =
+    m && m.region ? (
+      <>
+        <b>{m.region.toUpperCase()}</b> · {m.totalGames} partidas · {m.totalParticipants} jugadores · parches:{' '}
+        {m.patches.join(', ') || '—'}
+      </>
+    ) : (
+      'Sin datos. Ve a la pestaña Recolección para empezar.'
+    );
+
+  return (
+    <div className="layout">
+      <Sidebar tabs={TABS} active={active} onSelect={selectTab} onBrand={() => selectTab('champions')} />
+      <div className="content">
+        <header className="topbar">
+          <img className="ray-deco ray-top" src="/assets/ray.svg" alt="" />
+          <div className="meta">{metaLine}</div>
+        </header>
+        <main>
+          {!onCollect && <Filters />}
+          <Routes>
+            <Route path="/" element={<TabPage tab={tab} />} />
+            <Route path="/champ/:slug" element={<ChampionView />} />
+            <Route path="/item/:id" element={<ItemView />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+      </div>
+      <img className="ray-deco ray-bg" src="/assets/ray.svg" alt="" />
+    </div>
+  );
+}
