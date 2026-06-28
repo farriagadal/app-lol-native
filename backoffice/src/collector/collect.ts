@@ -28,6 +28,10 @@ export interface CollectOptions {
   maxPlayersPerBucket: number;
   /** Tiers (rangos) a recolectar; vacío/ausente = todos. */
   tiers?: string[];
+  /** Época (segundos) desde la que pedir partidas (parámetro startTime de Riot). */
+  startTime?: number;
+  /** Época (segundos) hasta la que pedir partidas (parámetro endTime de Riot). */
+  endTime?: number;
   /** Callback de progreso (para mostrarlo en la UI). */
   onProgress?: (p: { collected: number; target: number; bucket?: string }) => void;
 }
@@ -205,10 +209,13 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
 
       let ids: string[] | null;
       try {
+        const timeParams =
+          (opts.startTime ? `&startTime=${opts.startTime}` : '') +
+          (opts.endTime ? `&endTime=${opts.endTime}` : '');
         ids = await client.get<string[]>(
           region.regional,
           `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids` +
-            `?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${opts.matchesPerPlayer}`,
+            `?queue=${RANKED_SOLO_QUEUE_ID}&type=ranked&start=0&count=${opts.matchesPerPlayer}${timeParams}`,
         );
         consecutiveFailures = 0;
       } catch (err) {

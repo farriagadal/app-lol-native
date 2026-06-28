@@ -8,9 +8,18 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [react()],
   resolve: {
-    alias: {
-      '@ui': fileURLToPath(new URL('../../ui/src', import.meta.url)),
-    },
+    // ui/ es código fuente compartido fuera de backoffice: importa `react` a
+    // secas (para que Electron pueda aliasar a su propia copia). Aquí resolvemos
+    // esos specifiers a la copia instalada en backoffice/node_modules.
+    alias: [
+      { find: '@ui', replacement: fileURLToPath(new URL('../../ui/src', import.meta.url)) },
+      { find: /^react$/, replacement: fileURLToPath(new URL('../node_modules/react', import.meta.url)) },
+      { find: /^react-dom$/, replacement: fileURLToPath(new URL('../node_modules/react-dom', import.meta.url)) },
+      { find: /^react-dom\/client$/, replacement: fileURLToPath(new URL('../node_modules/react-dom/client', import.meta.url)) },
+      { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('../node_modules/react/jsx-runtime', import.meta.url)) },
+      { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('../node_modules/react/jsx-dev-runtime', import.meta.url)) },
+    ],
+    dedupe: ['react', 'react-dom'],
   },
   server: {
     port: 5173,

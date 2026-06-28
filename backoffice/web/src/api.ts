@@ -8,9 +8,10 @@ import type {
   StatFilter,
 } from '@ui';
 
-const qs = (params: Record<string, string | number>) =>
+const qs = (params: Record<string, string | number | undefined>) =>
   Object.entries(params)
-    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v!))}`)
     .join('&');
 
 /** Páginas de stats que comparten la forma StatFilter. */
@@ -27,8 +28,8 @@ export const api = {
   meta: (region: string): Promise<AnalyticsMeta> =>
     fetch('/api/meta?' + qs({ region: region || '' })).then((r) => r.json()),
 
-  champions: (region: string, patch: string, tier: string): Promise<ChampionStatRow[]> =>
-    fetch('/api/champions?' + qs({ region, patch, tier })).then((r) => r.json()),
+  champions: (region: string, patch: string, tier: string, dateFrom?: string, dateTo?: string): Promise<ChampionStatRow[]> =>
+    fetch('/api/champions?' + qs({ region, patch, tier, dateFrom, dateTo })).then((r) => r.json()),
 
   status: (region: string): Promise<CollectStatus> =>
     fetch('/api/status?' + qs({ region })).then((r) => r.json()),
@@ -37,7 +38,7 @@ export const api = {
   stats: <T = unknown>(page: StatsPage, region: string, f: StatFilter): Promise<T[]> =>
     fetch(
       `/api/${page}?` +
-        qs({ region, patch: f.patch, tier: f.tier, role: f.role, champion: f.champion }),
+        qs({ region, patch: f.patch, tier: f.tier, role: f.role, champion: f.champion, dateFrom: f.dateFrom, dateTo: f.dateTo }),
     ).then((r) => r.json()),
 
   itemGames: (
@@ -56,6 +57,8 @@ export const api = {
           tier: f.tier,
           role: f.role,
           champion: f.champion,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
           limit,
           offset,
         }),

@@ -100,8 +100,10 @@ const server = http.createServer(async (req, res) => {
       const region = url.searchParams.get('region');
       const patch = url.searchParams.get('patch') || 'all';
       const tier = url.searchParams.get('tier') || 'all';
+      const dateFrom = url.searchParams.get('dateFrom') || '';
+      const dateTo = url.searchParams.get('dateTo') || '';
       if (!region) return sendJson(res, 400, { error: 'falta region' });
-      sendJson(res, 200, await db.champions(region, patch, tier));
+      sendJson(res, 200, await db.champions(region, patch, tier, dateFrom, dateTo));
       return;
     }
     if (
@@ -115,6 +117,8 @@ const server = http.createServer(async (req, res) => {
         tier: url.searchParams.get('tier') || 'all',
         role: url.searchParams.get('role') || 'ALL',
         champion: url.searchParams.get('champion') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
       };
       const data =
         p === '/api/items' ? await db.itemStats(region, f)
@@ -136,6 +140,8 @@ const server = http.createServer(async (req, res) => {
         tier: url.searchParams.get('tier') || 'all',
         role: url.searchParams.get('role') || 'ALL',
         champion: url.searchParams.get('champion') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
       };
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
       const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);

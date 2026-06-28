@@ -92,6 +92,8 @@ export class CollectRunner {
         matchesPerPlayer: Math.min(100, Math.max(1, req.matchesPerPlayer)),
         maxPlayersPerBucket: Math.max(1, req.maxPlayersPerBucket ?? 40),
         tiers: req.tiers,
+        startTime: req.startTime,
+        endTime: req.endTime,
         onProgress: (p) =>
           this.emit({ phase: 'collecting', region, collected: p.collected, target: p.target, bucket: p.bucket }),
       });

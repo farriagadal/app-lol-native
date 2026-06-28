@@ -34,13 +34,13 @@ export function ChampionsPage() {
       setRows([]);
       return;
     }
-    api.champions(s.region, s.patch, s.tier).then((r) => {
+    api.champions(s.region, s.patch, s.tier, s.dateFrom || undefined, s.dateTo || undefined).then((r) => {
       if (!cancel) setRows(r);
     });
     return () => {
       cancel = true;
     };
-  }, [s.region, s.patch, s.tier]);
+  }, [s.region, s.patch, s.tier, s.dateFrom, s.dateTo]);
 
   const onSort = (k: string) => {
     if (k === sortKey) {

@@ -1,9 +1,8 @@
 /**
- * Barra de filtros compartida (región, parche, rango, campeón, roles). El
+ * Barra de filtros compartida (región, parche, rango, campeón, roles, fechas). El
  * campeón navega a su ficha (/champ/slug); si estamos en el detalle de un ítem,
- * solo refiltra sin salir. Portado de la sección filters de index.html + handlers
- * de app.js (el campeón se confirma al pulsar Enter o salir del campo, como el
- * evento `change` original, no en cada tecla).
+ * solo refiltra sin salir. El parche y el campeón son inputs escribibles con
+ * autocompletado (datalist). Las fechas (desde/hasta) filtran por game_creation.
  */
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -17,10 +16,18 @@ export function Filters() {
   const onItem = loc.pathname.startsWith('/item/');
 
   const champs = s.meta?.champions ?? [];
+  const patches = s.meta?.patches ?? [];
+
   const [champText, setChampText] = useState(s.champion === 'all' ? '' : s.champion);
+  const [patchText, setPatchText] = useState(s.patch === 'all' ? '' : s.patch);
+
   useEffect(() => {
     setChampText(s.champion === 'all' ? '' : s.champion);
   }, [s.champion]);
+
+  useEffect(() => {
+    setPatchText(s.patch === 'all' ? '' : s.patch);
+  }, [s.patch]);
 
   const onRegion = (v: string) => {
     s.setRegion(v);
@@ -32,8 +39,22 @@ export function Filters() {
     const match = champs.find((c) => c.toLowerCase() === v.toLowerCase());
     s.setChampion(match || 'all');
     if (!match) setChampText('');
-    if (onItem) return; // en el detalle de ítem solo refiltra
+    if (onItem) return;
     navigate(match ? `/champ/${encodeURIComponent(match.toLowerCase())}` : '/');
+  };
+
+  const commitPatch = () => {
+    const v = patchText.trim();
+    const match = patches.find((p) => p === v);
+    if (!v) {
+      s.setPatch('all');
+    } else if (match) {
+      s.setPatch(match);
+    } else {
+      // Texto no coincide con ningún parche conocido — resetear
+      s.setPatch('all');
+      setPatchText('');
+    }
   };
 
   return (
@@ -57,14 +78,21 @@ export function Filters() {
 
       <label>
         Parche
-        <select value={s.patch} onChange={(e) => s.setPatch(e.target.value)}>
-          <option value="all">Todos</option>
-          {(s.meta?.patches ?? []).map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+        <input
+          list="patchList"
+          placeholder="Todos"
+          value={patchText}
+          onChange={(e) => setPatchText(e.target.value)}
+          onBlur={commitPatch}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
+        />
+        <datalist id="patchList">
+          {patches.map((p) => (
+            <option key={p} value={p} />
           ))}
-        </select>
+        </datalist>
       </label>
 
       <label>
@@ -89,6 +117,24 @@ export function Filters() {
             <option key={c} value={c} />
           ))}
         </datalist>
+      </label>
+
+      <label>
+        Desde
+        <input
+          type="date"
+          value={s.dateFrom}
+          onChange={(e) => s.setDateFrom(e.target.value)}
+        />
+      </label>
+
+      <label>
+        Hasta
+        <input
+          type="date"
+          value={s.dateTo}
+          onChange={(e) => s.setDateTo(e.target.value)}
+        />
       </label>
 
       <RolePills value={s.role} onChange={s.setRole} />

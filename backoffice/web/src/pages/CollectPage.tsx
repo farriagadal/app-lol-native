@@ -18,6 +18,8 @@ export function CollectPage() {
   const [max, setMax] = useState(() => LS.get('max', '500'));
   const [perPlayer, setPerPlayer] = useState(() => LS.get('perPlayer', '15'));
   const [bucket, setBucket] = useState(() => LS.get('bucket', '40'));
+  const [collectFrom, setCollectFrom] = useState(() => LS.get('collectFrom', ''));
+  const [collectTo, setCollectTo] = useState(() => LS.get('collectTo', ''));
   const [tiers, setTiers] = useState<string[]>(() =>
     LS.get('collectTiers', ALL_TIERS.join(',')).split(',').filter(Boolean),
   );
@@ -119,6 +121,8 @@ export function CollectPage() {
       alert('Falta la API key de Riot.');
       return;
     }
+    const startTime = collectFrom ? Math.floor(new Date(collectFrom).getTime() / 1000) : undefined;
+    const endTime = collectTo ? Math.floor(new Date(collectTo + 'T23:59:59').getTime() / 1000) : undefined;
     const req = {
       region: server,
       apiKey: key,
@@ -126,12 +130,16 @@ export function CollectPage() {
       matchesPerPlayer: Number(perPlayer) || 15,
       maxPlayersPerBucket: Number(bucket) || 40,
       tiers,
+      startTime,
+      endTime,
     };
     LS.set('server', server);
     LS.set('apiKey', key);
     LS.set('max', String(req.maxMatches));
     LS.set('perPlayer', String(req.matchesPerPlayer));
     LS.set('bucket', String(req.maxPlayersPerBucket));
+    LS.set('collectFrom', collectFrom);
+    LS.set('collectTo', collectTo);
 
     setCollecting(true);
     setProgress({ frac: 0, text: 'Iniciando…' });
@@ -184,6 +192,22 @@ export function CollectPage() {
           <label>
             Jugadores por liga
             <input type="number" min={1} value={bucket} onChange={(e) => setBucket(e.target.value)} />
+          </label>
+          <label>
+            Desde (fecha)
+            <input
+              type="date"
+              value={collectFrom}
+              onChange={(e) => setCollectFrom(e.target.value)}
+            />
+          </label>
+          <label>
+            Hasta (fecha)
+            <input
+              type="date"
+              value={collectTo}
+              onChange={(e) => setCollectTo(e.target.value)}
+            />
           </label>
           <button className="btn-primary" disabled={collecting} onClick={run}>
             {collecting ? 'Recolectando…' : 'Recolectar'}

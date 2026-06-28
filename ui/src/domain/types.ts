@@ -32,6 +32,8 @@ export interface StatFilter {
   tier: string;
   role: string;
   champion: string;
+  dateFrom?: string; // YYYY-MM-DD
+  dateTo?: string;   // YYYY-MM-DD
 }
 
 export interface ItemStatRow {

@@ -49,11 +49,15 @@ interface Store {
   tier: string;
   role: string;
   champion: string;
+  dateFrom: string;
+  dateTo: string;
   setRegion: (v: string) => void;
   setPatch: (v: string) => void;
   setTier: (v: string) => void;
   setRole: (v: string) => void;
   setChampion: (v: string) => void;
+  setDateFrom: (v: string) => void;
+  setDateTo: (v: string) => void;
   /** Filtro común para las consultas de stats (con el campeón indicado). */
   statFilter: (champion?: string) => StatFilter;
   // metadatos / catálogos
@@ -78,6 +82,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [tier, setTierRaw] = useState(() => LS.get('tier', 'all'));
   const [role, setRoleRaw] = useState(() => LS.get('role', 'ALL'));
   const [champion, setChampionRaw] = useState(() => LS.get('champion', 'all'));
+  const [dateFrom, setDateFromRaw] = useState(() => LS.get('dateFrom', ''));
+  const [dateTo, setDateToRaw] = useState(() => LS.get('dateTo', ''));
 
   const [meta, setMeta] = useState<AnalyticsMeta | null>(null);
   const [dataRegions, setDataRegions] = useState<string[]>([]);
@@ -100,6 +106,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setTier = useMemo(() => persist('tier', setTierRaw), [persist]);
   const setRole = useMemo(() => persist('role', setRoleRaw), [persist]);
   const setChampion = useMemo(() => persist('champion', setChampionRaw), [persist]);
+  const setDateFrom = useMemo(() => persist('dateFrom', setDateFromRaw), [persist]);
+  const setDateTo = useMemo(() => persist('dateTo', setDateToRaw), [persist]);
 
   const reloadRegions = useCallback(async (): Promise<string[]> => {
     const reg: RegionsResponse = await api.regions();
@@ -168,8 +176,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const statFilter = useCallback(
-    (champ: string = 'all'): StatFilter => ({ patch, tier, role, champion: champ }),
-    [patch, tier, role],
+    (champ: string = 'all'): StatFilter => ({
+      patch,
+      tier,
+      role,
+      champion: champ,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    }),
+    [patch, tier, role, dateFrom, dateTo],
   );
 
   const value: Store = {
@@ -178,11 +193,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     tier,
     role,
     champion,
+    dateFrom,
+    dateTo,
     setRegion,
     setPatch,
     setTier,
     setRole,
     setChampion,
+    setDateFrom,
+    setDateTo,
     statFilter,
     meta,
     dataRegions,

@@ -27,6 +27,8 @@ export interface StatFilter {
   tier: string;      // 'all' o concreto
   role: string;      // 'ALL' o concreto
   champion: string;  // 'all' o id de campeón
+  dateFrom?: string; // YYYY-MM-DD
+  dateTo?: string;   // YYYY-MM-DD
 }
 
 export interface ItemStatRow {
@@ -162,7 +164,9 @@ export interface CollectRequest {
   maxMatches: number;
   matchesPerPlayer: number;
   maxPlayersPerBucket?: number;
-  tiers?: string[]; // rangos a recolectar; vacío/ausente = todos
+  tiers?: string[];    // rangos a recolectar; vacío/ausente = todos
+  startTime?: number;  // epoch segundos (parámetro startTime de la API de Riot)
+  endTime?: number;    // epoch segundos
 }
 
 export interface CollectProgress {

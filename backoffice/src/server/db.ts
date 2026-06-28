@@ -171,14 +171,26 @@ export class StatsDb {
 
   /** WHERE compartido por las páginas de items/runas/hechizos. */
   private scopeParams(f: StatFilter): Record<string, string> {
-    return { $patch: f.patch, $tier: f.tier, $role: f.role, $champion: f.champion };
+    return {
+      $patch: f.patch,
+      $tier: f.tier,
+      $role: f.role,
+      $champion: f.champion,
+      $dateFrom: f.dateFrom ?? '',
+      $dateTo: f.dateTo ?? '',
+    };
+  }
+  private get dateWhere(): string {
+    return `($dateFrom = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') >= $dateFrom)
+      AND ($dateTo = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') <= $dateTo)`;
   }
   private get scopeWhere(): string {
     return `p.team_position <> ''
       AND ($patch = 'all' OR m.patch = $patch)
       AND ($tier = 'all' OR m.tier = $tier)
       AND ($role = 'ALL' OR p.team_position = $role)
-      AND ($champion = 'all' OR p.champion_name = $champion)`;
+      AND ($champion = 'all' OR p.champion_name = $champion)
+      AND ${this.dateWhere}`;
   }
 
   async itemStats(region: string, f: StatFilter): Promise<ItemStatRow[]> {
@@ -474,19 +486,23 @@ export class StatsDb {
     }));
   }
 
-  async champions(region: string, patch = 'all', tier = 'all'): Promise<ChampionStatRow[]> {
+  async champions(region: string, patch = 'all', tier = 'all', dateFrom = '', dateTo = ''): Promise<ChampionStatRow[]> {
     const db = await this.open(region);
     if (!db) return [];
 
+    const dateW = `($dateFrom = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') >= $dateFrom)
+        AND ($dateTo = '' OR strftime('%Y-%m-%d', m.game_creation / 1000, 'unixepoch') <= $dateTo)`;
     const sql = `
       WITH tg AS (
         SELECT COUNT(*) c FROM matches m
         WHERE ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+          AND ${dateW}
       ),
       bn AS (
         SELECT b.champion_name cn, COUNT(*) c
         FROM bans b JOIN matches m ON m.match_id = b.match_id
         WHERE ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+          AND ${dateW}
         GROUP BY b.champion_name
       )
       SELECT p.champion_name AS champion_name,
@@ -500,9 +516,10 @@ export class StatsDb {
       FROM participants p JOIN matches m ON m.match_id = p.match_id
       WHERE p.team_position <> ''
         AND ($patch = 'all' OR m.patch = $patch) AND ($tier = 'all' OR m.tier = $tier)
+        AND ${dateW}
       GROUP BY p.champion_name, p.team_position`;
 
-    return this.rows(db.exec(sql, { $patch: patch, $tier: tier })).map((r) => ({
+    return this.rows(db.exec(sql, { $patch: patch, $tier: tier, $dateFrom: dateFrom, $dateTo: dateTo })).map((r) => ({
       championName: String(r.champion_name),
       role: String(r.role),
       games: Number(r.games),
