@@ -122,6 +122,7 @@ export interface ItemGamesResponse {
 export interface MatchParticipantRow {
   teamId: number;
   participantId: number;
+  puuid: string | null;
   championName: string;
   role: string;
   riotId: string | null;

@@ -1,7 +1,7 @@
 /**
- * Barra de filtros compartida (región, parche, rango, campeón, roles, fechas). El
- * campeón navega a su ficha (/champ/slug); si estamos en el detalle de un ítem,
- * solo refiltra sin salir. Las fechas (desde/hasta) filtran por game_creation.
+ * Barra de filtros compartida (región, parche, rango, campeón, roles, fechas).
+ * El filtro de campeón solo refiltra la vista actual; para ir a la ficha del
+ * campeón hay que hacer clic en él desde la lista. Las fechas filtran por game_creation.
  */
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -40,8 +40,7 @@ export function Filters() {
     const match = champs.find((c) => c.toLowerCase() === v.toLowerCase());
     s.setChampion(match || 'all');
     if (!match) setChampText('');
-    if (onItem) return;
-    navigate(match ? `/champ/${encodeURIComponent(match.toLowerCase())}` : '/');
+    if (!onItem && loc.pathname !== '/') navigate('/');
   };
 
   const selectedPatches = !s.patch || s.patch === 'all' ? [] : s.patch.split(',');

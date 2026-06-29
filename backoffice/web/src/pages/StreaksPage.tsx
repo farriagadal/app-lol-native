@@ -19,11 +19,10 @@ import {
 } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
-import { opggUrl } from '../opgg';
-import { PlayerLink } from '../components/links';
+import { champHref, playerHref, ChampLink, PlayerLink } from '../components/links';
 import { watchReplay } from '../downloadReplay';
 
-const PLAYERS_PER_PAGE = 20;
+const PLAYERS_PER_PAGE = 50;
 const matchCache = new Map<string, MatchDetail>();
 
 function cmpPatch(a: string, b: string): number {
@@ -90,11 +89,11 @@ function GameRow({ g, region, isStreak, showReplay, itemStats }: { g: StreakGame
     <>
       <tr className={`ig-row ${g.win ? 'win' : 'lose'}${isStreak ? ' streak-row' : ''}`} onClick={toggle}>
         <td className="ig-caret"><span className="caret">{open ? '▾' : '▸'}</span></td>
-        <td>
-          <span className="cell-ico">
+        <td onClick={(e) => e.stopPropagation()}>
+          <ChampLink name={g.championName} className="cell-ico">
             <ChampionIcon name={g.championName} lazy />
             <span>{g.championName}</span>
-          </span>
+          </ChampLink>
         </td>
         <td className="role-cell">
           <RoleIcon role={g.role} className="role-ic" />
@@ -126,7 +125,9 @@ function GameRow({ g, region, isStreak, showReplay, itemStats }: { g: StreakGame
               {loadError ? (
                 <div className="empty">Error al cargar la partida.</div>
               ) : detail ? (
-                <Scoreboard match={detail} playerHref={(id) => opggUrl(id, region)} />
+                <>
+                  <Scoreboard match={detail} playerHref={playerHref} champHref={champHref} />
+                </>
               ) : (
                 <div className="empty">Cargando partida…</div>
               )}
@@ -138,11 +139,13 @@ function GameRow({ g, region, isStreak, showReplay, itemStats }: { g: StreakGame
   );
 }
 
-function PlayerCard({ player, matches, region, itemStats }: { player: StreakPlayer; matches: StreakGameRow[]; region: string; itemStats: Map<number, ItemStatRow> }) {
-  const streakIndices = longestWinStreakIndices(matches);
+function PlayerCard({ player, matches, region, itemStats, duoOnly, duoMatchIds }: { player: StreakPlayer; matches: StreakGameRow[]; region: string; itemStats: Map<number, ItemStatRow>; duoOnly: boolean; duoMatchIds: Set<string> }) {
+  const visibleMatches = duoOnly ? matches.filter((m) => !duoMatchIds.has(m.matchId)) : matches;
+  const streakIndices = longestWinStreakIndices(visibleMatches);
   const winRatePct = player.totalGames > 0 ? Math.round((player.wins / player.totalGames) * 100) : 0;
-  const tier = mostCommonTier(matches);
-  const newest = newestPatch(matches.map((m) => m.patch));
+  const tier = mostCommonTier(visibleMatches);
+  const newest = newestPatch(visibleMatches.map((m) => m.patch));
+  const matchRegion = matches[0]?.matchId.split('_')[0]?.toUpperCase() ?? null;
 
   return (
     <div className="streak-player card">
@@ -151,6 +154,7 @@ function PlayerCard({ player, matches, region, itemStats }: { player: StreakPlay
         <PlayerLink puuid={player.puuid} className="streak-name player-link">
           {player.riotId || player.puuid.slice(0, 20) + '…'}
         </PlayerLink>
+        {matchRegion && <span className="server-badge">{matchRegion}</span>}
         {player.longestWinStreak > 0 && (
           <span className="streak-badge">{player.longestWinStreak} victorias seguidas</span>
         )}
@@ -158,7 +162,7 @@ function PlayerCard({ player, matches, region, itemStats }: { player: StreakPlay
           {player.totalGames} partidas · {winRatePct}% victorias
         </span>
       </div>
-      {matches.length > 0 && (
+      {visibleMatches.length > 0 && (
         <div className="table-host" style={{ marginTop: 10 }}>
           <table className="ig-table">
             <thead>
@@ -177,12 +181,15 @@ function PlayerCard({ player, matches, region, itemStats }: { player: StreakPlay
               </tr>
             </thead>
             <tbody>
-              {matches.map((g, i) => (
+              {visibleMatches.map((g, i) => (
                 <GameRow key={g.matchId} g={g} region={region} isStreak={streakIndices.has(i)} showReplay={g.patch === newest} itemStats={itemStats} />
               ))}
             </tbody>
           </table>
         </div>
+      )}
+      {duoOnly && visibleMatches.length === 0 && (
+        <div className="empty" style={{ padding: '10px 0' }}>Todas las partidas de este jugador fueron en duo.</div>
       )}
     </div>
   );
@@ -194,6 +201,12 @@ export function StreaksPage() {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [itemStatsMap, setItemStatsMap] = useState<Map<number, ItemStatRow>>(new Map());
+  const [duoOnly, setDuoOnly] = useState(false);
+  const [minStreak, setMinStreak] = useState('');
+  const [minGames, setMinGames] = useState('');
+  const [maxGames, setMaxGames] = useState('');
+  const [minWr, setMinWr] = useState('');
+  const [maxWr, setMaxWr] = useState('');
 
   useEffect(() => { setOffset(0); }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
@@ -227,9 +240,39 @@ export function StreaksPage() {
   }
   const total = resp?.total ?? 0;
 
+  const filteredPlayers = players.filter((p) => {
+    const wr = p.totalGames > 0 ? (p.wins / p.totalGames) * 100 : 0;
+    if (minStreak !== '' && p.longestWinStreak < Number(minStreak)) return false;
+    if (minGames !== '' && p.totalGames < Number(minGames)) return false;
+    if (maxGames !== '' && p.totalGames > Number(maxGames)) return false;
+    if (minWr !== '' && wr < Number(minWr)) return false;
+    if (maxWr !== '' && wr > Number(maxWr)) return false;
+    return true;
+  });
+
+  // Detectar partidas en duo: matchId donde ≥2 jugadores rastreados comparten equipo (mismo win).
+  const duoMatchIds = (() => {
+    const teamMap = new Map<string, Map<number, string[]>>();
+    for (const m of (resp?.matches ?? [])) {
+      let byWin = teamMap.get(m.matchId);
+      if (!byWin) { byWin = new Map(); teamMap.set(m.matchId, byWin); }
+      const key = m.win ? 1 : 0;
+      const arr = byWin.get(key) ?? [];
+      arr.push(m.puuid);
+      byWin.set(key, arr);
+    }
+    const ids = new Set<string>();
+    for (const [matchId, byWin] of teamMap) {
+      for (const puuids of byWin.values()) {
+        if (puuids.length >= 2) { ids.add(matchId); break; }
+      }
+    }
+    return ids;
+  })();
+
   const scopeDesc = (() => {
     const role = s.role === 'ALL' ? 'todos los roles' : ROLE_LABEL[s.role] || s.role;
-    const tier = s.tier === 'all' ? 'todos los rangos' : TIER_LABEL[s.tier] || s.tier;
+    const tier = s.tier === 'all' || !s.tier ? 'todos los rangos' : s.tier.split(',').map((t) => TIER_LABEL[t] || t).join(', ');
     const champ = s.champion === 'all' ? 'todos los campeones' : s.champion;
     return `${champ} · ${role} · ${tier} · parche ${s.patch === 'all' ? 'todos' : s.patch}`;
   })();
@@ -239,11 +282,36 @@ export function StreaksPage() {
       <div className="summary">
         {total > 0 ? (
           <>
-            <b>{total}</b> jugadores · {scopeDesc} · mostrando {offset + 1}–{Math.min(offset + PLAYERS_PER_PAGE, total)}
+            <b>{filteredPlayers.length}</b>{filteredPlayers.length !== total ? ` de ${total}` : ''} jugadores · {scopeDesc}
           </>
         ) : (
           <span>{scopeDesc}</span>
         )}
+      </div>
+      <div className="streak-filters">
+        <span className="streak-filter-group">
+          <label className="streak-filter-label">Racha mín.</label>
+          <input className="streak-filter-input" type="number" min={3} placeholder="3" value={minStreak} onChange={(e) => setMinStreak(e.target.value)} />
+        </span>
+        <span className="streak-filter-group">
+          <label className="streak-filter-label">Partidas</label>
+          <input className="streak-filter-input" type="number" min={0} placeholder="mín" value={minGames} onChange={(e) => setMinGames(e.target.value)} />
+          <span className="streak-filter-sep">–</span>
+          <input className="streak-filter-input" type="number" min={0} placeholder="máx" value={maxGames} onChange={(e) => setMaxGames(e.target.value)} />
+        </span>
+        <span className="streak-filter-group">
+          <label className="streak-filter-label">% victorias</label>
+          <input className="streak-filter-input" type="number" min={0} max={100} placeholder="mín" value={minWr} onChange={(e) => setMinWr(e.target.value)} />
+          <span className="streak-filter-sep">–</span>
+          <input className="streak-filter-input" type="number" min={0} max={100} placeholder="máx" value={maxWr} onChange={(e) => setMaxWr(e.target.value)} />
+        </span>
+        <button
+          className={`pill${duoOnly ? ' on' : ''}`}
+          onClick={() => setDuoOnly((v) => !v)}
+          title="Ocultar partidas jugadas en duo con otro jugador rastreado"
+        >
+          Sin duo
+        </button>
       </div>
       {!s.region ? (
         <div className="empty">No hay datos. Recolecta primero.</div>
@@ -253,15 +321,20 @@ export function StreaksPage() {
         <div className="empty">Sin datos para el filtro actual.</div>
       ) : (
         <>
-          {players.map((p) => (
+          {filteredPlayers.map((p) => (
             <PlayerCard
               key={p.puuid}
               player={p}
               matches={matchesByPuuid.get(p.puuid) ?? []}
               region={s.region}
               itemStats={itemStatsMap}
+              duoOnly={duoOnly}
+              duoMatchIds={duoMatchIds}
             />
           ))}
+          {!filteredPlayers.length && (
+            <div className="empty">Sin jugadores para los filtros aplicados.</div>
+          )}
           {total > PLAYERS_PER_PAGE && (
             <div className="iv-pager">
               <button

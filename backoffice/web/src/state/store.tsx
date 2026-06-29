@@ -149,7 +149,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!valid.length) setPatch('all');
         else if (valid.join(',') !== patch) setPatch(valid.join(','));
       }
-      if (tier !== 'all' && !(m.tiers || []).includes(tier)) setTier('all');
+      if (tier !== 'all' && tier) {
+        const valid = tier.split(',').filter((t) => (m.tiers || []).includes(t));
+        if (!valid.length) setTier('all');
+        else if (valid.join(',') !== tier) setTier(valid.join(','));
+      }
       if (champion !== 'all' && !(m.champions || []).includes(champion)) setChampion('all');
     });
     return () => {

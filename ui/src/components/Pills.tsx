@@ -59,7 +59,7 @@ export function TierPills({
   );
 }
 
-/** Selección única de rango para los filtros (emblemas + opción "Todos"). */
+/** Multi-selección de rango para los filtros (emblemas + opción "Todos"). */
 export function TierFilter({
   tiers,
   value,
@@ -70,10 +70,20 @@ export function TierFilter({
   onChange: (tier: string) => void;
 }) {
   const ordered = [...tiers].sort((a, b) => (TIER_ORDER[a] ?? 99) - (TIER_ORDER[b] ?? 99));
+  const selected = new Set(value === 'all' || !value ? [] : value.split(',').filter(Boolean));
+  const isAll = selected.size === 0;
+
+  const toggle = (t: string) => {
+    const next = new Set(selected);
+    if (next.has(t)) next.delete(t);
+    else next.add(t);
+    onChange(next.size === 0 ? 'all' : [...next].join(','));
+  };
+
   return (
     <div className="tier-filter">
       <span
-        className={'tier-opt' + (value === 'all' ? ' on' : '')}
+        className={'tier-opt' + (isAll ? ' on' : '')}
         title="Todos los rangos"
         onClick={() => onChange('all')}
       >
@@ -82,9 +92,9 @@ export function TierFilter({
       {ordered.map((t) => (
         <span
           key={t}
-          className={'tier-opt' + (value === t ? ' on' : '')}
+          className={'tier-opt' + (selected.has(t) ? ' on' : '')}
           title={TIER_TIP[t] || TIER_LABEL[t] || t}
-          onClick={() => onChange(t)}
+          onClick={() => toggle(t)}
         >
           <TierEmblem tier={t} className="tier-emb" />
         </span>

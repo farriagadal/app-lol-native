@@ -8,10 +8,11 @@ import { BuildRow } from './GameBits';
 const TEAM_TONE: Record<number, 'blue' | 'red'> = { 100: 'blue', 200: 'red' };
 const TEAM_NAME: Record<number, string> = { 100: 'Equipo azul', 200: 'Equipo rojo' };
 
-export function Scoreboard({ match, highlight, playerHref }: {
+export function Scoreboard({ match, highlight, playerHref, champHref }: {
   match: MatchDetail;
   highlight?: number | null;
-  playerHref?: (riotId: string) => string;
+  playerHref?: (puuid: string) => string;
+  champHref?: (name: string) => string;
 }) {
   const a = useAssets();
   const parts = match.participants || [];
@@ -28,22 +29,27 @@ export function Scoreboard({ match, highlight, playerHref }: {
     return (
       <div className="sb-player" key={p.participantId}>
         <div className="sb-id">
-          <span className="sb-champ-ic">
-            <AssetImg src={a.champIcon(p.championName)} />
-            <span className="sb-lvl">{p.champLevel}</span>
-          </span>
+          {champHref ? (
+            <a className="sb-champ-ic" href={champHref(p.championName)} onClick={(e) => e.stopPropagation()}>
+              <AssetImg src={a.champIcon(p.championName)} />
+              <span className="sb-lvl">{p.champLevel}</span>
+            </a>
+          ) : (
+            <span className="sb-champ-ic">
+              <AssetImg src={a.champIcon(p.championName)} />
+              <span className="sb-lvl">{p.champLevel}</span>
+            </span>
+          )}
           <span className="ico-pair sb-spells">
             <AssetImg src={a.spellIcon(p.summoner1)} title={a.spellName(p.summoner1)} />
             <AssetImg src={a.spellIcon(p.summoner2)} title={a.spellName(p.summoner2)} />
           </span>
           <AssetImg className="sb-ks" src={a.runeIcon(p.keystone)} title={a.runeName(p.keystone)} />
-          {playerHref && p.riotId ? (
+          {playerHref && p.puuid ? (
             <a
               className="sb-name sb-name-link"
-              href={playerHref(p.riotId)}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={p.riotId}
+              href={playerHref(p.puuid)}
+              title={p.riotId || ''}
               onClick={(e) => e.stopPropagation()}
             >
               {name}

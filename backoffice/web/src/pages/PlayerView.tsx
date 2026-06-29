@@ -9,7 +9,9 @@ import {
   RuneIcons,
   Scoreboard,
   SpellPair,
+  TierEmblem,
   ROLE_LABEL,
+  TIER_LABEL,
   type ItemStatRow,
   type ItemGameRow,
   type PlayerGamesResponse,
@@ -18,6 +20,7 @@ import {
 import { api } from '../api';
 import { useStore } from '../state/store';
 import { opggUrl } from '../opgg';
+import { champHref, playerHref, ChampLink } from '../components/links';
 import { watchReplay } from '../downloadReplay';
 
 const PAGE = 50;
@@ -61,11 +64,11 @@ function GameRow({ g, region, showReplay, itemStats }: { g: ItemGameRow; region:
     <>
       <tr className={`ig-row ${g.win ? 'win' : 'lose'}`} onClick={toggle}>
         <td className="ig-caret"><span className="caret">{open ? '▾' : '▸'}</span></td>
-        <td>
-          <span className="cell-ico">
+        <td onClick={(e) => e.stopPropagation()}>
+          <ChampLink name={g.championName} className="cell-ico">
             <ChampionIcon name={g.championName} lazy />
             <span>{g.championName}</span>
-          </span>
+          </ChampLink>
         </td>
         <td className="role-cell">
           <RoleIcon role={g.role} className="role-ic" />
@@ -97,7 +100,9 @@ function GameRow({ g, region, showReplay, itemStats }: { g: ItemGameRow; region:
               {loadError ? (
                 <div className="empty">Error al cargar la partida.</div>
               ) : detail ? (
-                <Scoreboard match={detail} playerHref={(id) => opggUrl(id, region)} />
+                <>
+                  <Scoreboard match={detail} playerHref={playerHref} champHref={champHref} />
+                </>
               ) : (
                 <div className="empty">Cargando partida…</div>
               )}
@@ -117,39 +122,47 @@ export function PlayerView() {
   const [loading, setLoading] = useState(true);
   const [itemStatsMap, setItemStatsMap] = useState<Map<number, ItemStatRow>>(new Map());
 
-  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo]);
+  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
   useEffect(() => {
     let cancel = false;
     if (!s.region || !puuid) { setResp(null); setLoading(false); return; }
     setLoading(true);
-    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter('all'), PAGE, offset)
+    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter(s.champion), PAGE, offset)
       .then((r) => { if (!cancel) { setResp(r); setLoading(false); } })
       .catch(() => { if (!cancel) { setResp(null); setLoading(false); } });
     return () => { cancel = true; };
-  }, [puuid, s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo, offset]);
+  }, [puuid, s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo, offset]);
 
   useEffect(() => {
     if (!s.region) { setItemStatsMap(new Map()); return; }
-    api.stats<ItemStatRow>('items', s.region, s.statFilter('all'))
+    api.stats<ItemStatRow>('items', s.region, s.statFilter(s.champion))
       .then((rows) => {
         const m = new Map<number, ItemStatRow>();
         for (const r of rows) m.set(r.item, r);
         setItemStatsMap(m);
       })
       .catch(() => {});
-  }, [s.region, s.patch, s.tier, s.role, s.dateFrom, s.dateTo]);
+  }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
   const total = resp?.total ?? 0;
   const games = resp?.games ?? [];
   const riotId = resp?.riotId ?? null;
   const newest = newestPatch(games.map((g) => g.patch));
 
+  const latestTier = games[0]?.tier ?? null;
+
   const wins = games.filter((g) => g.win).length;
   const winRatePct = games.length > 0 ? Math.round((wins / games.length) * 100) : 0;
   const avgKda = games.length > 0
     ? (games.reduce((s, g) => s + g.kda, 0) / games.length).toFixed(2)
     : '—';
+
+  // Cuando la región es 'all' (TODOS), inferir la región real desde el prefijo del matchId
+  // (ej. "LA2_12345" → "la2") para construir el link de OP.GG correctamente.
+  const opggRegion = s.region !== 'all'
+    ? s.region
+    : (games[0]?.matchId.split('_')[0]?.toLowerCase() ?? null);
 
   return (
     <section>
@@ -158,28 +171,41 @@ export function PlayerView() {
           <span className="player-avatar-icon">👤</span>
         </div>
         <div style={{ flex: 1 }}>
-          <div className="name">{riotId ?? (puuid ? puuid.slice(0, 20) + '…' : '—')}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="name">{riotId ?? (puuid ? puuid.slice(0, 20) + '…' : '—')}</span>
+            {opggRegion && <span className="server-badge">{opggRegion.toUpperCase()}</span>}
+            {latestTier && (
+              <span className="rank-badge" title={TIER_LABEL[latestTier] || latestTier}>
+                <TierEmblem tier={latestTier} className="rank-emblem" />
+                <span>{TIER_LABEL[latestTier] || latestTier}</span>
+              </span>
+            )}
+          </div>
           <div className="meta">
             {total > 0
               ? `${total} partidas guardadas · ${winRatePct}% victorias · KDA prom. ${avgKda}`
               : 'Sin partidas para el filtro actual'}
           </div>
         </div>
-        {riotId && s.region && (
+        {riotId && (
+          <a
+            className="collect-btn"
+            href={`/collect?riotId=${encodeURIComponent(riotId)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Recolectar partidas de este jugador"
+          >
+            ⬇ Recolectar datos
+          </a>
+        )}
+        {riotId && opggRegion && (
           <a
             className="opgg-btn"
-            href={opggUrl(riotId, s.region)}
+            href={opggUrl(riotId, opggRegion)}
             target="_blank"
             rel="noopener noreferrer"
             title="Ver en OP.GG"
           >
-            <img
-              className="opgg-favicon"
-              src="https://www.op.gg/favicon.ico"
-              alt="OP.GG"
-              width={16}
-              height={16}
-            />
             Ver en OP.GG
           </a>
         )}

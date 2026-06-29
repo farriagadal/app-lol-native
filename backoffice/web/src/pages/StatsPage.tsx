@@ -39,7 +39,7 @@ export function StatsPage({ kind }: { kind: StatsKind }) {
       setRows([]);
       return;
     }
-    api.stats<Row>(kind, s.region, s.statFilter('all')).then((r) => {
+    api.stats<Row>(kind, s.region, s.statFilter(s.champion)).then((r) => {
       if (cancel) return;
       const filtered = kind === 'items' ? r.filter((x) => !a.isTrinketOrConsumable((x as ItemStatRow).item)) : r;
       setRows(filtered);
@@ -47,7 +47,7 @@ export function StatsPage({ kind }: { kind: StatsKind }) {
     return () => {
       cancel = true;
     };
-  }, [kind, s.region, s.patch, s.tier, s.role]);
+  }, [kind, s.region, s.patch, s.tier, s.role, s.champion]);
 
   // Nombre legible para ordenar/mostrar (depende del resolver de Data Dragon).
   const nameOf = (r: Row): string => {
@@ -129,7 +129,7 @@ export function StatsPage({ kind }: { kind: StatsKind }) {
   ];
 
   const role = s.role === 'ALL' ? 'todos los roles' : ROLE_LABEL[s.role] || s.role;
-  const tier = s.tier === 'all' ? 'todos los rangos' : TIER_LABEL[s.tier] || s.tier;
+  const tier = s.tier === 'all' || !s.tier ? 'todos los rangos' : s.tier.split(',').map((t) => TIER_LABEL[t] || t).join(', ');
   const rowKey = (r: Row & { _name: string }, i: number): string => {
     if (kind === 'items') return 'i' + (r as ItemStatRow).item;
     if (kind === 'spells') return 's' + (r as SpellStatRow).spell1 + '-' + (r as SpellStatRow).spell2;

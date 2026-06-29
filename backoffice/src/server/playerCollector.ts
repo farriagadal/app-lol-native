@@ -23,6 +23,7 @@ export interface PlayerCollectProgress {
   error?: string;
 }
 
+/** Retorna true si el jugador fue encontrado y procesado, false si no existe en esa región. */
 export async function collectPlayer(
   region: string,
   apiKey: string,
@@ -30,7 +31,7 @@ export async function collectPlayer(
   limit: number,
   dataDir: string,
   onProgress: (p: PlayerCollectProgress) => void,
-): Promise<void> {
+): Promise<boolean> {
   const parts = riotId.split('#');
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error('Formato inválido. Usa "NombreJugador#TAG" (ej. Faker#KR1)');
@@ -50,7 +51,7 @@ export async function collectPlayer(
     regional,
     `/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`,
   );
-  if (!account) throw new Error(`Jugador "${riotId}" no encontrado en la región ${region}.`);
+  if (!account) return false;
 
   // 2. Obtener IDs de partidas ranked
   onProgress({ ...base, phase: 'fetching-ids' });
@@ -60,7 +61,7 @@ export async function collectPlayer(
   );
   if (!matchIds?.length) {
     onProgress({ ...base, phase: 'done' });
-    return;
+    return true;
   }
 
   const seenMatches = store.loadSeenMatches();
@@ -69,7 +70,7 @@ export async function collectPlayer(
 
   if (!toDownload.length) {
     onProgress({ ...base, phase: 'done', skipped, total: matchIds.length });
-    return;
+    return true;
   }
 
   // 3. Descargar partidas nuevas
@@ -92,4 +93,5 @@ export async function collectPlayer(
   }
 
   onProgress({ ...base, phase: 'done', downloaded, skipped, total: toDownload.length });
+  return true;
 }

@@ -5,6 +5,7 @@
  * servidores, se ejecutan secuencialmente.
  */
 import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ProgressBar, TierPills, TIERS, type CollectProgress, type CollectStatus } from '@ui';
 import { api } from '../api';
 import { LS, useStore } from '../state/store';
@@ -28,10 +29,18 @@ interface BaseReq {
   endTime?: number;
 }
 
-function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onCollected: () => void }) {
+function PlayerCollectSection({ apiKey, onCollected, defaultRiotId }: { apiKey: string; onCollected: () => void; defaultRiotId?: string }) {
   const s = useStore();
-  const [riotId, setRiotId] = useState('');
+  const [riotId, setRiotId] = useState(defaultRiotId ?? '');
   const [limit, setLimit] = useState('20');
+  const sectionRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (defaultRiotId) {
+      setRiotId(defaultRiotId);
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [defaultRiotId]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>('');
   const [statusClass, setStatusClass] = useState('status');
@@ -40,10 +49,10 @@ function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onColle
   const stopPoll = () => { if (pollRef.current) { window.clearTimeout(pollRef.current); pollRef.current = null; } };
 
   const poll = useCallback(() => {
-    api.collectPlayerStatus().then((st: { phase: string; riotId?: string; downloaded?: number; skipped?: number; total?: number; error?: string }) => {
+    api.collectPlayerStatus().then((st: { phase: string; riotId?: string; region?: string; downloaded?: number; skipped?: number; total?: number; error?: string }) => {
       const phases: Record<string, string> = {
         idle: '—',
-        resolving: 'Resolviendo Riot ID…',
+        resolving: `Buscando en ${st.region?.toUpperCase() ?? '…'}`,
         'fetching-ids': 'Obteniendo historial de partidas…',
         downloading: `Descargando ${st.downloaded ?? 0}/${st.total ?? 0} partidas (${st.skipped ?? 0} ya guardadas)…`,
         'building-db': 'Reconstruyendo base de datos…',
@@ -70,14 +79,13 @@ function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onColle
     const id = riotId.trim();
     if (!id.includes('#')) { alert('Ingresa el Riot ID con formato NombreJugador#TAG'); return; }
     if (!apiKey) { alert('Falta la API key de Riot (ingresala en la sección de arriba).'); return; }
-    const singleRegion = s.region && s.region !== 'all' && !s.region.includes(',') ? s.region : null;
-    if (!singleRegion) { alert('Selecciona un servidor específico (solo uno) en el filtro Servidor para recolectar partidas de un jugador.'); return; }
+
     stopPoll();
     setBusy(true);
     setStatus('Iniciando…');
     setStatusClass('status');
     try {
-      const res = await api.collectPlayer({ region: singleRegion, apiKey, riotId: id, limit: Number(limit) || 20 });
+      const res = await api.collectPlayer({ apiKey, riotId: id, limit: Number(limit) || 20 });
       if (!res.ok && res.status !== 202) {
         const j = await res.json() as { error?: string };
         throw new Error(j.error ?? `HTTP ${res.status}`);
@@ -91,7 +99,7 @@ function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onColle
   };
 
   return (
-    <section className="card" style={{ marginTop: 16 }}>
+    <section ref={sectionRef} className="card" style={{ marginTop: 16 }}>
       <div className="card-head">
         <h2>Recolectar jugador</h2>
         {status && <span className={statusClass}>{status}</span>}
@@ -124,6 +132,8 @@ function PlayerCollectSection({ apiKey, onCollected }: { apiKey: string; onColle
 
 export function CollectPage() {
   const s = useStore();
+  const [searchParams] = useSearchParams();
+  const defaultRiotId = searchParams.get('riotId') ?? undefined;
   const [collectServers, setCollectServers] = useState<string[]>(() =>
     LS.get('collectServers', 'la2').split(',').filter(Boolean),
   );
@@ -284,7 +294,6 @@ export function CollectPage() {
       startTime,
       endTime,
     };
-    LS.set('apiKey', key);
     LS.set('max', String(baseReq.maxMatches));
     LS.set('perPlayer', String(baseReq.matchesPerPlayer));
     LS.set('bucket', String(baseReq.maxPlayersPerBucket));
@@ -312,16 +321,6 @@ export function CollectPage() {
           <span className={statusClass}>{statusText}</span>
         </div>
         <div className="form-grid">
-          <label>
-            API key de Riot
-            <input
-              type="password"
-              placeholder="RGAPI-..."
-              autoComplete="off"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </label>
           <label>
             Máx. partidas (total)
             <input type="number" min={1} value={max} onChange={(e) => setMax(e.target.value)} />
@@ -382,11 +381,28 @@ export function CollectPage() {
         </div>
         {progress && <ProgressBar value={progress.frac} text={progress.text} />}
         <p className="hint">
-          <b>Reanudable:</b> si falla o se corta, vuelve a pulsar <b>Recolectar</b> y continúa donde quedó (no
-          re-descarga lo ya guardado). La dev key de Riot caduca cada 24h; se guarda solo en este navegador.
+          <b>Reanudable:</b> si falla o se corta, vuelve a pulsar <b>Recolectar</b> y continúa donde quedó (no re-descarga lo ya guardado).
         </p>
       </section>
-      <PlayerCollectSection apiKey={apiKey} onCollected={loadHistory} />
+      <section className="card">
+        <div className="card-head">
+          <h2>API key de Riot</h2>
+        </div>
+        <div className="form-grid">
+          <label>
+            API key
+            <input
+              type="password"
+              placeholder="RGAPI-..."
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => { setApiKey(e.target.value); LS.set('apiKey', e.target.value); }}
+            />
+          </label>
+        </div>
+        <p className="hint">La dev key caduca cada 24h; se guarda solo en este navegador.</p>
+      </section>
+      <PlayerCollectSection apiKey={apiKey} onCollected={loadHistory} defaultRiotId={defaultRiotId} />
       {history.length > 0 && (
         <section className="card">
           <div className="card-head">

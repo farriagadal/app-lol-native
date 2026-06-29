@@ -24,7 +24,7 @@ import {
 } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
-import { opggUrl } from '../opgg';
+import { champHref, playerHref, ChampLink } from '../components/links';
 import { watchReplay } from '../downloadReplay';
 
 const ITEM_PAGE = 50;
@@ -80,11 +80,11 @@ function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; r
         <td className="ig-caret">
           <span className="caret">{open ? '▾' : '▸'}</span>
         </td>
-        <td>
-          <span className="cell-ico">
+        <td onClick={(e) => e.stopPropagation()}>
+          <ChampLink name={g.championName} className="cell-ico">
             <ChampionIcon name={g.championName} lazy />
             <span>{g.championName}</span>
-          </span>
+          </ChampLink>
         </td>
         <td className="role-cell">
           <RoleIcon role={g.role} className="role-ic" />
@@ -124,7 +124,7 @@ function GameRow({ g, region, item, showReplay, itemStats }: { g: ItemGameRow; r
               {error ? (
                 <div className="empty">Error al cargar la partida.</div>
               ) : detail ? (
-                <Scoreboard match={detail} highlight={item} playerHref={(id) => opggUrl(id, region)} />
+                <Scoreboard match={detail} highlight={item} playerHref={playerHref} champHref={champHref} />
               ) : (
                 <div className="empty">Cargando partida…</div>
               )}
@@ -191,7 +191,7 @@ export function ItemView() {
 
   const scope = (() => {
     const role = s.role === 'ALL' ? 'todos los roles' : ROLE_LABEL[s.role] || s.role;
-    const tier = s.tier === 'all' ? 'todos los rangos' : TIER_LABEL[s.tier] || s.tier;
+    const tier = s.tier === 'all' || !s.tier ? 'todos los rangos' : s.tier.split(',').map((t) => TIER_LABEL[t] || t).join(', ');
     const champ = s.champion === 'all' ? 'todos los campeones' : s.champion;
     return `${champ} · ${role} · ${tier} · parche ${s.patch === 'all' ? 'todos' : s.patch}`;
   })();

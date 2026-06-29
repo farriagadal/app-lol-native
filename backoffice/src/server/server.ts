@@ -94,6 +94,12 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://localhost');
   const p = url.pathname;
+  const t0 = Date.now();
+  const isApi = p.startsWith('/api/');
+  if (isApi) {
+    console.log(`→ ${req.method} ${req.url}`);
+    res.on('finish', () => console.log(`← ${req.method} ${p} ${res.statusCode} [${Date.now() - t0}ms]`));
+  }
   try {
     if (p === '/api/regions' && req.method === 'GET') {
       sendJson(res, 200, {
@@ -274,24 +280,41 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/collect-player' && req.method === 'POST') {
       const body = await readBody(req);
-      const { region, apiKey, riotId, limit } = JSON.parse(body) as {
-        region: string; apiKey: string; riotId: string; limit: number;
+      const { apiKey, riotId, limit } = JSON.parse(body) as {
+        apiKey: string; riotId: string; limit: number;
       };
-      if (!region || !apiKey || !riotId) return sendJson(res, 400, { error: 'faltan campos: region, apiKey, riotId' });
+      if (!apiKey || !riotId) return sendJson(res, 400, { error: 'faltan campos: apiKey, riotId' });
       if (playerCollectProgress && !['done', 'error', 'idle'].includes(playerCollectProgress.phase)) {
         return sendJson(res, 409, { error: 'Ya hay una recolección de jugador en curso.' });
       }
       const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
-      console.log(`[player-collect] ${riotId} en ${region}, hasta ${safeLimit} partidas`);
-      void collectPlayer(region, apiKey, riotId, safeLimit, DATA_DIR, (p) => {
-        playerCollectProgress = p;
-        console.log(`[player-collect] ${p.phase} ${p.downloaded}/${p.total}`);
-        if (p.phase === 'done') void db.reload(region);
-      }).catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[player-collect] ERROR: ${msg}`);
-        playerCollectProgress = { phase: 'error', riotId, region, downloaded: 0, skipped: 0, total: 0, error: msg };
-      });
+      const allRegions = Object.keys(REGIONS);
+      console.log(`[player-collect] ${riotId} buscando en ${allRegions.length} servidores, hasta ${safeLimit} partidas`);
+      void (async () => {
+        for (const region of allRegions) {
+          playerCollectProgress = { phase: 'resolving', riotId, region, downloaded: 0, skipped: 0, total: 0 };
+          try {
+            const found = await collectPlayer(region, apiKey, riotId, safeLimit, DATA_DIR, (prog) => {
+              playerCollectProgress = prog;
+              console.log(`[player-collect] ${prog.phase} ${prog.downloaded}/${prog.total}`);
+              if (prog.phase === 'done') void db.reload(region);
+            });
+            if (found) return; // encontrado y listo, detener búsqueda
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            // Error 401/403 (API key inválida): abortar búsqueda
+            if (msg.includes('401') || msg.includes('403')) {
+              console.error(`[player-collect] ERROR fatal: ${msg}`);
+              playerCollectProgress = { phase: 'error', riotId, region, downloaded: 0, skipped: 0, total: 0, error: msg };
+              return;
+            }
+            // Cualquier otro error en este servidor: continuar con el siguiente
+            console.warn(`[player-collect] ${region}: ${msg}, probando siguiente servidor…`);
+          }
+        }
+        // Si llegamos aquí, no se encontró en ningún servidor
+        playerCollectProgress = { phase: 'error', riotId, region: '', downloaded: 0, skipped: 0, total: 0, error: `Jugador "${riotId}" no encontrado en ningún servidor.` };
+      })();
       return sendJson(res, 202, { started: true });
     }
     if (p === '/api/run' && req.method === 'POST') {

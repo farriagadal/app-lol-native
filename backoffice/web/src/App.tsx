@@ -11,12 +11,14 @@ import { ChampionView } from './pages/ChampionView';
 import { ItemView } from './pages/ItemView';
 import { PlayerView } from './pages/PlayerView';
 import { StreaksPage } from './pages/StreaksPage';
+import { FAQPage } from './pages/FAQPage';
 
 const TABS: SidebarTab[] = [
   { key: 'champions', label: 'Campeones' },
   { key: 'items', label: 'Items' },
   { key: 'runes', label: 'Runas' },
   { key: 'spells', label: 'Hechizos' },
+  { key: 'faq', label: 'FAQ' },
   { key: 'streaks', label: 'Rachas' },
   { key: 'collect', label: '⬇ Recolección', className: 'tab-collect' },
 ];
@@ -30,6 +32,8 @@ function TabPage({ tab }: { tab: string }) {
       return <StatsPage kind="runes" />;
     case 'spells':
       return <StatsPage kind="spells" />;
+    case 'faq':
+      return <FAQPage />;
     case 'streaks':
       return <StreaksPage />;
     case 'collect':
@@ -62,7 +66,7 @@ export function App() {
   };
 
   const atRoot = loc.pathname === '/';
-  const onCollect = atRoot && tab === 'collect';
+  const onCollect = (atRoot && (tab === 'collect' || tab === 'faq')) || loc.pathname === '/collect';
   const active = atRoot ? tab : ''; // ninguna pestaña activa en ficha/detalle
 
   return (
@@ -79,6 +83,7 @@ export function App() {
             <Route path="/champ/:slug" element={<ChampionView />} />
             <Route path="/item/:id" element={<ItemView />} />
             <Route path="/player/:puuid" element={<PlayerView />} />
+            <Route path="/collect" element={<CollectPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>

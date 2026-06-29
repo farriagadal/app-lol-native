@@ -105,7 +105,7 @@ export function ChampionView() {
 
   const scope = useMemo(() => {
     const role = s.role === 'ALL' ? 'todos los roles' : ROLE_LABEL[s.role] || s.role;
-    const tier = s.tier === 'all' ? 'todos los rangos' : TIER_LABEL[s.tier] || s.tier;
+    const tier = s.tier === 'all' || !s.tier ? 'todos los rangos' : s.tier.split(',').map((t) => TIER_LABEL[t] || t).join(', ');
     return `${champ || 'todos los campeones'} · ${role} · ${tier} · parche ${s.patch === 'all' ? 'todos' : s.patch}`;
   }, [champ, s.role, s.tier, s.patch]);
 
