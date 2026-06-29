@@ -58,6 +58,8 @@ async function main(): Promise<void> {
         .split(',')
         .map((s) => s.trim().toUpperCase())
         .filter(Boolean);
+      const startTime = flags.get('start-time') ? Number(flags.get('start-time')) : undefined;
+      const endTime = flags.get('end-time') ? Number(flags.get('end-time')) : undefined;
       await collect({
         region,
         apiKey: getApiKey(),
@@ -65,6 +67,8 @@ async function main(): Promise<void> {
         matchesPerPlayer: Math.min(100, Math.max(1, num(flags, 'per-player', 15))),
         maxPlayersPerBucket: Math.max(1, num(flags, 'players-per-bucket', 40)),
         tiers: tiers.length ? tiers : undefined,
+        startTime,
+        endTime,
       });
       break;
     }

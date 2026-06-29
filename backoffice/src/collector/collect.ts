@@ -1,5 +1,7 @@
+import { MongoClient } from 'mongodb';
 import { RiotClient } from './riotClient';
 import { Store } from './store';
+import { MongoStore } from './mongoStore';
 import { log } from './log';
 import {
   resolveRegion,
@@ -32,6 +34,8 @@ export interface CollectOptions {
   startTime?: number;
   /** Época (segundos) hasta la que pedir partidas (parámetro endTime de Riot). */
   endTime?: number;
+  /** URI de MongoDB Atlas. Si se pasa, las partidas se guardan allí en vez de JSONL. */
+  mongoUri?: string;
   /** Callback de progreso (para mostrarlo en la UI). */
   onProgress?: (p: { collected: number; target: number; bucket?: string }) => void;
 }
@@ -68,11 +72,38 @@ function buildBuckets(allowed: Set<string> | null): Bucket[] {
 
 export async function collect(opts: CollectOptions): Promise<{ collected: number }> {
   const region = resolveRegion(opts.region);
-  const client = new RiotClient(opts.apiKey);
-  const store = new Store(opts.region);
+  const riotClient = new RiotClient(opts.apiKey);
 
-  const seenMatches = store.loadSeenMatches();
-  const seenPlayers = store.loadSeenPlayers();
+  let mongoClient: MongoClient | undefined;
+  let mongoStore: MongoStore | undefined;
+  if (opts.mongoUri) {
+    mongoClient = new MongoClient(opts.mongoUri);
+    await mongoClient.connect();
+    mongoStore = new MongoStore(mongoClient, opts.region);
+    await mongoStore.ensureIndexes();
+  }
+
+  // Store solo se crea si no hay MongoDB (evita escribir en disco cuando no se necesita)
+  const storeOrNull = mongoStore ? null : new Store(opts.region);
+
+  try {
+    return await _collect(opts, region, riotClient, storeOrNull, mongoStore);
+  } finally {
+    await mongoClient?.close();
+  }
+}
+
+async function _collect(
+  opts: CollectOptions,
+  region: ReturnType<typeof resolveRegion>,
+  client: RiotClient,
+  store: Store | null,
+  mongoStore: MongoStore | undefined,
+): Promise<{ collected: number }> {
+  const seenMatches = mongoStore
+    ? await mongoStore.loadSeenMatchIds()
+    : store!.loadSeenMatches();
+  const seenPlayers: Set<string> = store ? store.loadSeenPlayers() : new Set();
   let collected = seenMatches.size;
   let missingPuuid = 0;
 
@@ -180,7 +211,9 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
   // Cuota EQUITATIVA por rango. Al reanudar parte de lo ya recolectado por tier,
   // así el reparto se mantiene parejo entre ejecuciones.
   const perTierTarget = Math.max(1, Math.ceil(opts.maxMatches / Math.max(1, tierOrder.length)));
-  const tierCollected = store.loadTierCounts();
+  const tierCollected = mongoStore
+    ? await mongoStore.loadTierCounts()
+    : store!.loadTierCounts();
   for (const t of tierOrder) if (!tierCollected.has(t)) tierCollected.set(t, 0);
 
   const gens = new Map(
@@ -241,8 +274,12 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
         }
         if (!match) continue;
 
-        store.appendMatch(match);
-        store.appendMatchTier(id, tier); // etiqueta la partida con su rango
+        if (mongoStore) {
+          await mongoStore.save(id, match, tier);
+        } else {
+          store!.appendMatch(match);
+          store!.appendMatchTier(id, tier);
+        }
         seenMatches.add(id);
         collected++;
         tierCollected.set(tier, (tierCollected.get(tier) ?? 0) + 1);
@@ -254,7 +291,7 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
         }
       }
 
-      store.markPlayerSeen(puuid);
+      store?.markPlayerSeen(puuid);
       seenPlayers.add(puuid);
     }
   }
@@ -263,6 +300,6 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
     log.warn(`${missingPuuid} entradas de liga sin puuid resoluble (omitidas).`);
   }
   log.info(`Listo. Total partidas guardadas: ${collected}.`);
-  log.info(`Datos en: ${store.matchesFile}`);
+  if (store) log.info(`Datos en: ${store.matchesFile}`);
   return { collected };
 }

@@ -232,6 +232,146 @@ export function FAQPage() {
           </li>
         </ul>
       </Section>
+
+      {/* ── COLECCIÓN ── */}
+      <p className="faq-group-label">Colección de datos</p>
+
+      <Section title="¿Qué inputs necesita el colector para arrancar?">
+        <table className="faq-table">
+          <thead>
+            <tr><th>Parámetro</th><th>Cómo se pasa</th><th>Valor por defecto</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>RIOT_API_KEY</code></td>
+              <td>Variable de entorno (<code>RGAPI-…</code>)</td>
+              <td className="faq-bad">Obligatorio</td>
+            </tr>
+            <tr>
+              <td><code>--region</code></td>
+              <td>Argumento CLI</td>
+              <td><code>la2</code></td>
+            </tr>
+            <tr>
+              <td><code>--max</code></td>
+              <td>Argumento CLI</td>
+              <td>3 000 partidas</td>
+            </tr>
+            <tr>
+              <td><code>--per-player</code></td>
+              <td>Argumento CLI</td>
+              <td>15 partidas por jugador</td>
+            </tr>
+            <tr>
+              <td><code>--players-per-bucket</code></td>
+              <td>Argumento CLI</td>
+              <td>40 jugadores por tier/división</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="faq-note">
+          También se puede iniciar una recolección desde el panel web usando el botón{' '}
+          <strong>Iniciar colección</strong>: la interfaz pide la API key y los parámetros
+          opcionales antes de disparar el proceso en el servidor.
+        </p>
+      </Section>
+
+      <Section title="¿Qué camino sigue el colector para obtener las partidas?">
+        <p>El proceso tiene 4 pasos en orden; cada uno depende del anterior:</p>
+        <ol className="faq-list">
+          <li>
+            <strong>Obtener jugadores por tier</strong> — Riot League-V4
+            <pre className="faq-code">{`Challenger / Grandmaster / Master → endpoint apex (lista completa)
+Diamond → Iron                    → /entries/RANKED_SOLO_5x5/{TIER}/{DIVISION}?page=n`}</pre>
+          </li>
+          <li>
+            <strong>Resolver PUUID</strong> (solo tiers no-apex) — Riot Summoner-V4
+            <pre className="faq-code">{`GET /lol/summoner/v4/summoners/{summonerId}
+→ extrae puuid del jugador`}</pre>
+            Los tiers apex ya incluyen el <code>puuid</code> directamente en la respuesta.
+          </li>
+          <li>
+            <strong>Obtener IDs de partidas por jugador</strong> — Riot Match-V5
+            <pre className="faq-code">{`GET /lol/match/v5/matches/by-puuid/{puuid}/ids
+    ?queue=420&type=ranked&count=15`}</pre>
+          </li>
+          <li>
+            <strong>Descargar el detalle completo de cada partida</strong> — Riot Match-V5
+            <pre className="faq-code">{`GET /lol/match/v5/matches/{matchId}
+→ guarda el MatchDTO completo en matches.jsonl`}</pre>
+          </li>
+        </ol>
+        <p className="faq-note">
+          El colector distribuye la cuota de partidas equitativamente entre todos los tiers
+          (round-robin) para que la muestra no quede sesgada hacia un solo rango. Los IDs ya
+          descargados se guardan en <code>seen-matches.txt</code> para evitar duplicados entre
+          ejecuciones.
+        </p>
+      </Section>
+
+      <Section title="¿Qué archivos genera el colector y para qué sirven?">
+        <table className="faq-table">
+          <thead>
+            <tr><th>Archivo</th><th>Descripción</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>matches.jsonl</code></td>
+              <td>MatchDTOs crudos de Riot, una partida por línea (append-only)</td>
+            </tr>
+            <tr>
+              <td><code>seen-matches.txt</code></td>
+              <td>IDs de partidas ya descargadas — evita duplicados entre ejecuciones</td>
+            </tr>
+            <tr>
+              <td><code>seen-players.txt</code></td>
+              <td>PUUIDs ya procesados — permite reanudar sin repetir jugadores</td>
+            </tr>
+            <tr>
+              <td><code>match-tier.tsv</code></td>
+              <td>Mapeo <code>matchId → tier</code> para etiquetar el rango de cada partida</td>
+            </tr>
+            <tr>
+              <td><code>lol.db</code></td>
+              <td>Base SQLite normalizada con índices y vistas — es lo que consume el panel web</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Después de colectar, el paso <strong>buildDb</strong> convierte el <code>matches.jsonl</code>{' '}
+          en <code>lol.db</code> con 4 tablas normalizadas:{' '}
+          <code>matches</code>, <code>participants</code>, <code>bans</code> y{' '}
+          <code>team_objectives</code>.
+        </p>
+      </Section>
+
+      <Section title="Rate limits y tolerancia a fallos">
+        <p>
+          El colector respeta los límites de la API de Riot de forma automática:
+        </p>
+        <ul className="faq-list">
+          <li>
+            <strong>Dev key:</strong> 20 req/1s + 100 req/120s (efectivamente ~0.83 req/s).
+            Recolectar 3 000 partidas puede tomar entre 1 y 2 horas.
+          </li>
+          <li>
+            <strong>Error 429 (Too Many Requests):</strong> el colector espera el tiempo indicado
+            en el header <code>Retry-After</code> y reintenta automáticamente.
+          </li>
+          <li>
+            <strong>Error 401/403:</strong> la clave es inválida o expiró — el proceso se detiene
+            de inmediato.
+          </li>
+          <li>
+            <strong>6 fallos consecutivos:</strong> el proceso se detiene para evitar gastar cuota
+            en errores. Todo lo recolectado hasta ese punto queda guardado en disco.
+          </li>
+          <li>
+            <strong>Reanudación:</strong> volver a correr el colector retoma desde donde quedó
+            gracias a los archivos <code>seen-matches.txt</code> y <code>seen-players.txt</code>.
+          </li>
+        </ul>
+      </Section>
     </div>
   );
 }

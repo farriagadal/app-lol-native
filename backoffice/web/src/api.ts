@@ -122,7 +122,7 @@ export const api = {
   collectHistory: (): Promise<{ region: string; totalGames: number; totalParticipants: number; patches: string[] }[]> =>
     fetch('/api/collect-history').then((r) => r.json()),
 
-  collectPlayer: (req: { apiKey: string; riotId: string; limit: number }): Promise<Response> =>
+  collectPlayer: (req: { apiKey: string; riotId: string; limit: number; region?: string }): Promise<Response> =>
     fetch('/api/collect-player', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { MongoClient } from 'mongodb';
 import { Store } from './store';
+import { MongoStore } from './mongoStore';
 import { loadChampionMap } from './ddragon';
 import { log } from './log';
 import { resolveRegion, RANKED_SOLO_QUEUE_ID } from './config';
@@ -11,6 +13,15 @@ export interface AggregateOptions {
   patch?: string;
   /** Filas con menos de N partidas se excluyen del JSON limpio. */
   minGames: number;
+  /** URI de MongoDB Atlas. Si se pasa, lee partidas desde allí en vez de JSONL. */
+  mongoUri?: string;
+}
+
+interface MatchCore {
+  queueId: number;
+  gameVersion: string;
+  participants: { championName: string; teamPosition: string; win: boolean }[];
+  bans: { championId: number }[];
 }
 
 const VALID_ROLES = new Set(['TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY']);
@@ -35,9 +46,60 @@ function patchOf(gameVersion: string): string {
   return parts.length >= 2 ? `${parts[0]}.${parts[1]}` : gameVersion;
 }
 
+async function* matchSource(
+  store: Store,
+  mongoStore: MongoStore | undefined,
+): AsyncGenerator<MatchCore> {
+  if (mongoStore) {
+    for await (const doc of mongoStore.iterateMatches()) {
+      yield {
+        queueId: doc.queueId,
+        gameVersion: doc.gameVersion,
+        participants: doc.participants,
+        bans: doc.bans,
+      };
+    }
+  } else {
+    for await (const match of store.iterateMatches()) {
+      if (!match.info) continue;
+      yield {
+        queueId: match.info.queueId,
+        gameVersion: match.info.gameVersion,
+        participants: match.info.participants.map((p) => ({
+          championName: p.championName,
+          teamPosition: p.teamPosition,
+          win: p.win,
+        })),
+        bans: match.info.teams.flatMap((t) => t.bans.map((b) => ({ championId: b.championId }))),
+      };
+    }
+  }
+}
+
 export async function aggregate(opts: AggregateOptions): Promise<void> {
   resolveRegion(opts.region); // valida la región
   const store = new Store(opts.region);
+
+  let mongoClient: MongoClient | undefined;
+  let mongoStore: MongoStore | undefined;
+  if (opts.mongoUri) {
+    mongoClient = new MongoClient(opts.mongoUri);
+    await mongoClient.connect();
+    mongoStore = new MongoStore(mongoClient, opts.region);
+  }
+
+  try {
+    await _aggregate(opts, store, mongoStore);
+  } finally {
+    await mongoClient?.close();
+  }
+}
+
+async function _aggregate(
+  opts: AggregateOptions,
+  store: Store,
+  mongoStore: MongoStore | undefined,
+): Promise<void> {
   const champMap = await loadChampionMap();
 
   // Acumuladores
@@ -48,15 +110,12 @@ export async function aggregate(opts: AggregateOptions): Promise<void> {
   let skippedQueue = 0;
   let skippedPatch = 0;
 
-  for await (const match of store.iterateMatches()) {
-    const info = match.info;
-    if (!info) continue;
-
-    if (info.queueId !== RANKED_SOLO_QUEUE_ID) {
+  for await (const match of matchSource(store, mongoStore)) {
+    if (match.queueId !== RANKED_SOLO_QUEUE_ID) {
       skippedQueue++;
       continue;
     }
-    const patch = patchOf(info.gameVersion);
+    const patch = patchOf(match.gameVersion);
     patchDist.set(patch, (patchDist.get(patch) ?? 0) + 1);
     if (opts.patch && patch !== opts.patch) {
       skippedPatch++;
@@ -66,7 +125,7 @@ export async function aggregate(opts: AggregateOptions): Promise<void> {
     totalGames++;
 
     // Picks: win rate y pick rate por (campeón, rol)
-    for (const p of info.participants) {
+    for (const p of match.participants) {
       if (!VALID_ROLES.has(p.teamPosition)) continue; // remakes / sin rol
       const key = `${p.championName}|${p.teamPosition}`;
       const acc = roleAcc.get(key) ?? { games: 0, wins: 0 };
@@ -77,12 +136,10 @@ export async function aggregate(opts: AggregateOptions): Promise<void> {
 
     // Bans: ban rate por campeón (deduplicado dentro de la partida)
     const bannedThisGame = new Set<string>();
-    for (const team of info.teams) {
-      for (const ban of team.bans) {
-        if (ban.championId < 0) continue; // -1 = sin baneo
-        const name = champMap.byNumericId.get(ban.championId);
-        if (name) bannedThisGame.add(name);
-      }
+    for (const ban of match.bans) {
+      if (ban.championId < 0) continue; // -1 = sin baneo
+      const name = champMap.byNumericId.get(ban.championId);
+      if (name) bannedThisGame.add(name);
     }
     for (const name of bannedThisGame) {
       banCount.set(name, (banCount.get(name) ?? 0) + 1);

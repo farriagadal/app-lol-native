@@ -33,6 +33,8 @@ function PlayerCollectSection({ apiKey, onCollected, defaultRiotId }: { apiKey: 
   const s = useStore();
   const [riotId, setRiotId] = useState(defaultRiotId ?? '');
   const [limit, setLimit] = useState('20');
+  const defaultRegion = s.region !== 'all' && !s.region.includes(',') ? s.region : 'la2';
+  const [playerRegion, setPlayerRegion] = useState(defaultRegion);
   const sectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -85,7 +87,7 @@ function PlayerCollectSection({ apiKey, onCollected, defaultRiotId }: { apiKey: 
     setStatus('Iniciando…');
     setStatusClass('status');
     try {
-      const res = await api.collectPlayer({ apiKey, riotId: id, limit: Number(limit) || 20 });
+      const res = await api.collectPlayer({ apiKey, riotId: id, limit: Number(limit) || 20, region: playerRegion });
       if (!res.ok && res.status !== 202) {
         const j = await res.json() as { error?: string };
         throw new Error(j.error ?? `HTTP ${res.status}`);
@@ -118,6 +120,14 @@ function PlayerCollectSection({ apiKey, onCollected, defaultRiotId }: { apiKey: 
         <label>
           Últimas N partidas
           <input type="number" min={1} max={200} value={limit} onChange={(e) => setLimit(e.target.value)} />
+        </label>
+        <label>
+          Servidor
+          <select value={playerRegion} onChange={(e) => setPlayerRegion(e.target.value)}>
+            {s.servers.map((sv) => (
+              <option key={sv.key} value={sv.key}>{sv.label} ({sv.key})</option>
+            ))}
+          </select>
         </label>
         <button className="btn-primary" disabled={busy} onClick={run}>
           {busy ? 'Descargando…' : 'Descargar partidas'}

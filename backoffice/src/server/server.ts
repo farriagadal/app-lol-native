@@ -280,18 +280,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/collect-player' && req.method === 'POST') {
       const body = await readBody(req);
-      const { apiKey, riotId, limit } = JSON.parse(body) as {
-        apiKey: string; riotId: string; limit: number;
+      const { apiKey, riotId, limit, region: reqRegion } = JSON.parse(body) as {
+        apiKey: string; riotId: string; limit: number; region?: string;
       };
       if (!apiKey || !riotId) return sendJson(res, 400, { error: 'faltan campos: apiKey, riotId' });
       if (playerCollectProgress && !['done', 'error', 'idle'].includes(playerCollectProgress.phase)) {
         return sendJson(res, 409, { error: 'Ya hay una recolección de jugador en curso.' });
       }
       const safeLimit = Math.min(200, Math.max(1, Number(limit) || 20));
-      const allRegions = Object.keys(REGIONS);
-      console.log(`[player-collect] ${riotId} buscando en ${allRegions.length} servidores, hasta ${safeLimit} partidas`);
+      // Si el frontend pasa una región concreta, usarla; si no, probar todas.
+      const regionsToTry = reqRegion && REGIONS[reqRegion as keyof typeof REGIONS]
+        ? [reqRegion]
+        : Object.keys(REGIONS);
+      console.log(`[player-collect] ${riotId} buscando en ${regionsToTry.join(', ')}, hasta ${safeLimit} partidas`);
       void (async () => {
-        for (const region of allRegions) {
+        for (const region of regionsToTry) {
           playerCollectProgress = { phase: 'resolving', riotId, region, downloaded: 0, skipped: 0, total: 0 };
           try {
             const found = await collectPlayer(region, apiKey, riotId, safeLimit, DATA_DIR, (prog) => {
