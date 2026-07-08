@@ -636,6 +636,7 @@ export class StatsDb {
       AND (${patchW})
       AND (${tierW})
       AND ($role = 'ALL' OR p.team_position = $role)
+      AND ($champion = 'all' OR p.champion_name = $champion)
       AND ${dateW}`;
 
     const baseParams: Record<string, string> = {
@@ -643,6 +644,7 @@ export class StatsDb {
       ...this.tierBindings(tiers),
       $puuid: puuid,
       $role: f.role,
+      $champion: f.champion || 'all',
       $dateFrom: f.dateFrom ?? '',
       $dateTo: f.dateTo ?? '',
     };
@@ -1081,6 +1083,216 @@ export class StatsDb {
     });
 
     return { total, players, matches: allMatches };
+  }
+
+  /**
+   * Recomienda campeones del pool según rivales (carril opuesto), aliados
+   * (mismo equipo), o ambos. Cualquiera de las dos listas puede estar vacía.
+   */
+  async recommend(
+    region: string,
+    myChamps: string[],
+    enemies: string[],
+    allies: string[],
+    role: string,
+    f: Pick<StatFilter, 'patch' | 'tier' | 'dateFrom' | 'dateTo'>,
+  ): Promise<import('./types').RecommendResponse> {
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length || !myChamps.length) return { recommendations: [] };
+
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
+    const tiers = this.parseTier(f.tier);
+    const tierW = this.tierClause(tiers);
+    const dateW = this.dateWhere;
+
+    const champBindings: Record<string, string> = {};
+    myChamps.forEach((c, i) => { champBindings[`$c${i}`] = c; });
+    const champIn = myChamps.map((_, i) => `$c${i}`).join(', ');
+
+    const enemyBindings: Record<string, string> = {};
+    enemies.forEach((e, i) => { enemyBindings[`$e${i}`] = e; });
+
+    const allyBindings: Record<string, string> = {};
+    allies.forEach((a, i) => { allyBindings[`$a${i}`] = a; });
+
+    const roleWhere = role === 'ALL'
+      ? `p1.team_position <> ''`
+      : `p1.team_position = $role AND p1.team_position <> ''`;
+
+    const enemyFilter = enemies.length > 0
+      ? `AND EXISTS (
+           SELECT 1 FROM participants p2
+           WHERE p2.match_id = p1.match_id
+             AND p2.team_position = p1.team_position
+             AND p2.team_id <> p1.team_id
+             AND p2.champion_name IN (${enemies.map((_, i) => `$e${i}`).join(', ')})
+         )`
+      : '';
+
+    const allyFilter = allies.length > 0
+      ? `AND EXISTS (
+           SELECT 1 FROM participants p3
+           WHERE p3.match_id = p1.match_id
+             AND p3.team_id = p1.team_id
+             AND p3.participant_id <> p1.participant_id
+             AND p3.champion_name IN (${allies.map((_, i) => `$a${i}`).join(', ')})
+         )`
+      : '';
+
+    const sql = `
+      SELECT p1.champion_name my_champ, COUNT(*) games, SUM(p1.win) wins
+      FROM participants p1 JOIN matches m ON m.match_id = p1.match_id
+      WHERE p1.champion_name IN (${champIn})
+        AND ${roleWhere}
+        AND m.game_duration >= 240
+        AND (${patchW})
+        AND (${tierW})
+        AND ${dateW}
+        ${enemyFilter}
+        ${allyFilter}
+      GROUP BY p1.champion_name
+      ORDER BY wins * 1.0 / games DESC, games DESC`;
+
+    const params: Record<string, string> = {
+      ...this.patchBindings(patches),
+      ...this.tierBindings(tiers),
+      ...champBindings,
+      ...enemyBindings,
+      ...allyBindings,
+      $dateFrom: f.dateFrom ?? '',
+      $dateTo: f.dateTo ?? '',
+    };
+    if (role !== 'ALL') params.$role = role;
+
+    const mapRow = (r: Record<string, number | string | null>): import('./types').RecommendRow => ({
+      championName: String(r.my_champ),
+      games: Number(r.games),
+      wins: Number(r.wins),
+      winRate: Number(r.games) > 0 ? Number(r.wins) / Number(r.games) : 0,
+    });
+
+    const addMissing = (rows: import('./types').RecommendRow[]): import('./types').RecommendRow[] => {
+      const found = new Set(rows.map((r) => r.championName));
+      for (const c of myChamps) {
+        if (!found.has(c)) rows.push({ championName: c, games: 0, wins: 0, winRate: 0 });
+      }
+      return rows;
+    };
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return { recommendations: [] };
+      return { recommendations: addMissing(this.rows(db.exec(sql, params)).map(mapRow)) };
+    }
+
+    const merged = new Map<string, { games: number; wins: number }>();
+    for (const c of myChamps) merged.set(c, { games: 0, wins: 0 });
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      for (const row of this.rows(db.exec(sql, params))) {
+        const c = String(row.my_champ);
+        const ex = merged.get(c) ?? { games: 0, wins: 0 };
+        ex.games += Number(row.games);
+        ex.wins += Number(row.wins);
+        merged.set(c, ex);
+      }
+    }
+    const recommendations = [...merged.entries()]
+      .map(([championName, { games, wins }]) => ({
+        championName, games, wins, winRate: games > 0 ? wins / games : 0,
+      }))
+      .sort((a, b) => b.winRate - a.winRate || b.games - a.games);
+    return { recommendations };
+  }
+
+  /** Lista paginada de partidas con resumen de equipos. */
+  async matchList(
+    region: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<import('./types').MatchListResponse> {
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length) return { total: 0, matches: [] };
+
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
+    const tiers = this.parseTier(f.tier);
+    const tierW = this.tierClause(tiers);
+    const dateW = this.dateWhere;
+
+    const baseWhere = `m.game_duration >= 240
+      AND (${patchW})
+      AND (${tierW})
+      AND ${dateW}`;
+
+    const havingClause = `($champion = 'all' OR SUM(CASE WHEN p.champion_name = $champion THEN 1 ELSE 0 END) > 0)
+      AND ($role = 'ALL' OR SUM(CASE WHEN p.team_position = $role THEN 1 ELSE 0 END) > 0)`;
+
+    const countSql = `
+      SELECT COUNT(*) c FROM (
+        SELECT m.match_id
+        FROM matches m JOIN participants p ON p.match_id = m.match_id
+        WHERE ${baseWhere}
+        GROUP BY m.match_id
+        HAVING ${havingClause}
+      )`;
+
+    const listSql = `
+      SELECT m.match_id, m.patch, m.tier, m.game_duration, m.game_creation, m.winning_team,
+        GROUP_CONCAT(CASE WHEN p.team_id = 100 THEN p.champion_name END) blue_champs,
+        GROUP_CONCAT(CASE WHEN p.team_id = 200 THEN p.champion_name END) red_champs,
+        GROUP_CONCAT(CASE WHEN p.team_id = 100 THEN p.team_position END) blue_roles,
+        GROUP_CONCAT(CASE WHEN p.team_id = 200 THEN p.team_position END) red_roles
+      FROM matches m JOIN participants p ON p.match_id = m.match_id
+      WHERE ${baseWhere}
+      GROUP BY m.match_id
+      HAVING ${havingClause}
+      ORDER BY m.game_creation DESC`;
+
+    const params: Record<string, string> = {
+      ...this.patchBindings(patches),
+      ...this.tierBindings(tiers),
+      $champion: f.champion,
+      $role: f.role,
+      $dateFrom: f.dateFrom ?? '',
+      $dateTo: f.dateTo ?? '',
+    };
+
+    const mapRow = (r: Record<string, number | string | null>): import('./types').MatchListRow => ({
+      matchId: String(r.match_id),
+      patch: r.patch == null ? null : String(r.patch),
+      tier: r.tier == null ? null : String(r.tier),
+      gameDuration: Number(r.game_duration ?? 0),
+      gameCreation: Number(r.game_creation ?? 0),
+      winningTeam: r.winning_team == null ? null : Number(r.winning_team),
+      blueChamps: r.blue_champs ? String(r.blue_champs).split(',').filter(Boolean) : [],
+      redChamps: r.red_champs ? String(r.red_champs).split(',').filter(Boolean) : [],
+      blueRoles: r.blue_roles ? String(r.blue_roles).split(',').filter(Boolean) : [],
+      redRoles: r.red_roles ? String(r.red_roles).split(',').filter(Boolean) : [],
+    });
+
+    if (regionList.length === 1) {
+      const db = await this.open(regionList[0]);
+      if (!db) return { total: 0, matches: [] };
+      const total = Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      const matches = this.rows(db.exec(listSql + ` LIMIT ${limit} OFFSET ${offset}`, params)).map(mapRow);
+      return { total, matches };
+    }
+
+    // Multi-región: traer todas las partidas de cada región, unificar y paginar.
+    let total = 0;
+    const allMatches: import('./types').MatchListRow[] = [];
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      total += Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      allMatches.push(...this.rows(db.exec(listSql + ` LIMIT ${limit + offset}`, params)).map(mapRow));
+    }
+    allMatches.sort((a, b) => b.gameCreation - a.gameCreation);
+    return { total, matches: allMatches.slice(offset, offset + limit) };
   }
 
   private mapStreakRow(r: Record<string, number | string | null>): StreakGameRow {

@@ -6,12 +6,14 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { MongoClient } from 'mongodb';
 import { StatsDb } from './db';
 import { CollectRunner } from './collectRunner';
 import { REGIONS } from '../collector/config';
 import { downloadReplay, parseMatchId } from './replayDownloader';
 import { lcuReplayDownload, lcuReplayWatch } from './replayLcu';
 import { collectPlayer, type PlayerCollectProgress } from './playerCollector';
+import { MongoStore } from '../collector/mongoStore';
 import type { CollectRequest } from './types';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -23,6 +25,25 @@ const PORT = Number(process.env.PORT) || 4317;
 
 const db = new StatsDb(DATA_DIR);
 const runner = new CollectRunner(DATA_DIR);
+
+// Si MONGODB_URI está definida, conectar para servir Partidas desde Atlas.
+let mongoStore: MongoStore | null = null;
+const MONGO_URI = process.env.MONGODB_URI;
+if (MONGO_URI) {
+  const mongoClient = new MongoClient(MONGO_URI, {
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+  });
+  mongoClient
+    .connect()
+    .then(() => {
+      mongoStore = new MongoStore(mongoClient, '');
+      console.log('[server] MongoDB conectado — Partidas usará Atlas.');
+    })
+    .catch((err: Error) => {
+      console.warn('[server] MongoDB no disponible, Partidas usará SQLite:', err.message);
+    });
+}
 let replayWatchBusy = false;
 let playerCollectProgress: PlayerCollectProgress | null = null;
 
@@ -232,7 +253,7 @@ const server = http.createServer(async (req, res) => {
         patch: url.searchParams.get('patch') || 'all',
         tier: url.searchParams.get('tier') || 'all',
         role: url.searchParams.get('role') || 'ALL',
-        champion: 'all',
+        champion: url.searchParams.get('champion') || 'all',
         dateFrom: url.searchParams.get('dateFrom') || undefined,
         dateTo: url.searchParams.get('dateTo') || undefined,
       };
@@ -259,12 +280,57 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, await db.itemGames(region, item, f, limit, offset));
       return;
     }
+    if (p === '/api/recommend' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      const splitList = (key: string) =>
+        (url.searchParams.get(key) || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const myChamps = splitList('myChamps');
+      const enemies = splitList('enemies');
+      const allies = splitList('allies');
+      const role = url.searchParams.get('role') || 'ALL';
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
+      };
+      sendJson(res, 200, await db.recommend(region, myChamps, enemies, allies, role, f));
+      return;
+    }
+    if (p === '/api/games' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      if (!region) return sendJson(res, 400, { error: 'falta region' });
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        role: url.searchParams.get('role') || 'ALL',
+        champion: url.searchParams.get('champion') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
+      };
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+      const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+      if (mongoStore) {
+        const allRegions = await mongoStore.regions();
+        const regions =
+          !region || region === 'all'
+            ? allRegions
+            : region.split(',').filter((r) => allRegions.includes(r));
+        sendJson(res, 200, await mongoStore.matchList(regions, f, limit, offset));
+      } else {
+        sendJson(res, 200, await db.matchList(region, f, limit, offset));
+      }
+      return;
+    }
     if (p === '/api/match' && req.method === 'GET') {
       const region = url.searchParams.get('region');
       const matchId = url.searchParams.get('matchId');
       if (!region) return sendJson(res, 400, { error: 'falta region' });
       if (!matchId) return sendJson(res, 400, { error: 'falta matchId' });
-      const detail = await db.matchDetail(region, matchId);
+      const detail = mongoStore
+        ? await mongoStore.matchDetail(matchId)
+        : await db.matchDetail(region, matchId);
       if (!detail) return sendJson(res, 404, { error: 'partida no encontrada' });
       sendJson(res, 200, detail);
       return;

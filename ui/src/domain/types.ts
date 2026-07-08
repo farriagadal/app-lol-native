@@ -187,6 +187,35 @@ export interface StreaksResponse {
   matches: StreakGameRow[];
 }
 
+export interface RecommendRow {
+  championName: string;
+  games: number;
+  wins: number;
+  winRate: number;
+}
+
+export interface RecommendResponse {
+  recommendations: RecommendRow[];
+}
+
+export interface MatchListRow {
+  matchId: string;
+  patch: string | null;
+  tier: string | null;
+  gameDuration: number;
+  gameCreation: number;
+  winningTeam: number | null;
+  blueChamps: string[];
+  redChamps: string[];
+  blueRoles: string[];
+  redRoles: string[];
+}
+
+export interface MatchListResponse {
+  total: number;
+  matches: MatchListRow[];
+}
+
 export interface CollectRequest {
   region: string;
   apiKey: string;

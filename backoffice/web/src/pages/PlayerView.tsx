@@ -121,29 +121,40 @@ export function PlayerView() {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [itemStatsMap, setItemStatsMap] = useState<Map<number, ItemStatRow>>(new Map());
+  const [champ, setChamp] = useState('all');
+  const [champText, setChampText] = useState('');
+  const [randomBusy, setRandomBusy] = useState(false);
 
-  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
+  const champList = s.meta?.champions ?? [];
+  const commitChampion = () => {
+    const v = champText.trim();
+    const match = champList.find((c) => c.toLowerCase() === v.toLowerCase());
+    setChamp(match || 'all');
+    setChampText(match || '');
+  };
+
+  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo]);
 
   useEffect(() => {
     let cancel = false;
     if (!s.region || !puuid) { setResp(null); setLoading(false); return; }
     setLoading(true);
-    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter(s.champion), PAGE, offset)
+    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter(champ), PAGE, offset)
       .then((r) => { if (!cancel) { setResp(r); setLoading(false); } })
       .catch(() => { if (!cancel) { setResp(null); setLoading(false); } });
     return () => { cancel = true; };
-  }, [puuid, s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo, offset]);
+  }, [puuid, s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo, offset]);
 
   useEffect(() => {
     if (!s.region) { setItemStatsMap(new Map()); return; }
-    api.stats<ItemStatRow>('items', s.region, s.statFilter(s.champion))
+    api.stats<ItemStatRow>('items', s.region, s.statFilter(champ))
       .then((rows) => {
         const m = new Map<number, ItemStatRow>();
         for (const r of rows) m.set(r.item, r);
         setItemStatsMap(m);
       })
       .catch(() => {});
-  }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
+  }, [s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo]);
 
   const total = resp?.total ?? 0;
   const games = resp?.games ?? [];
@@ -163,6 +174,14 @@ export function PlayerView() {
   const opggRegion = s.region !== 'all'
     ? s.region
     : (games[0]?.matchId.split('_')[0]?.toLowerCase() ?? null);
+
+  // Solo las partidas del parche más reciente tienen replay reproducible.
+  const playable = games.filter((g) => g.patch === newest);
+  const playRandom = () => {
+    if (!playable.length || randomBusy) return;
+    const g = playable[Math.floor(Math.random() * playable.length)];
+    void watchReplay(g.matchId, setRandomBusy);
+  };
 
   return (
     <section>
@@ -187,6 +206,16 @@ export function PlayerView() {
               : 'Sin partidas para el filtro actual'}
           </div>
         </div>
+        <button
+          className="opgg-btn"
+          disabled={!playable.length || randomBusy}
+          title={playable.length
+            ? 'Reproducir el replay de una partida al azar (parche actual)'
+            : 'Sin partidas con replay disponible para el filtro actual'}
+          onClick={playRandom}
+        >
+          {randomBusy ? '…' : '🎲 Replay aleatorio'}
+        </button>
         {riotId && (
           <a
             className="collect-btn"
@@ -210,6 +239,27 @@ export function PlayerView() {
           </a>
         )}
       </div>
+
+      <section className="filters">
+        <label>
+          Campeón
+          <input
+            list="pv-championList"
+            placeholder="Todos"
+            value={champText}
+            onChange={(e) => setChampText(e.target.value)}
+            onBlur={commitChampion}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <datalist id="pv-championList">
+            {champList.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </label>
+      </section>
 
       <div className="table-host">
         {!s.region ? (

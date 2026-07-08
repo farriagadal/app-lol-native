@@ -4,8 +4,10 @@ import type {
   ChampionStatRow,
   CollectStatus,
   ItemGamesResponse,
+  MatchListResponse,
   PlayerGamesResponse,
   MatchDetail,
+  RecommendResponse,
   StatFilter,
   StreaksResponse,
 } from '@ui';
@@ -102,6 +104,51 @@ export const api = {
           patch: f.patch,
           tier: f.tier,
           role: f.role,
+          champion: f.champion,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
+          limit,
+          offset,
+        }),
+    ).then((r) => r.json()),
+
+  recommend: (
+    region: string,
+    myChamps: string[],
+    enemies: string[],
+    allies: string[],
+    role: string,
+    f: Pick<StatFilter, 'patch' | 'tier' | 'dateFrom' | 'dateTo'>,
+  ): Promise<RecommendResponse> =>
+    fetch(
+      '/api/recommend?' +
+        qs({
+          region,
+          myChamps: myChamps.join(','),
+          enemies: enemies.join(','),
+          allies: allies.join(','),
+          role,
+          patch: f.patch,
+          tier: f.tier,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
+        }),
+    ).then((r) => r.json()),
+
+  games: (
+    region: string,
+    f: StatFilter,
+    limit: number,
+    offset: number,
+  ): Promise<MatchListResponse> =>
+    fetch(
+      '/api/games?' +
+        qs({
+          region,
+          patch: f.patch,
+          tier: f.tier,
+          role: f.role,
+          champion: f.champion,
           dateFrom: f.dateFrom,
           dateTo: f.dateTo,
           limit,

@@ -51,6 +51,7 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   const flags = parseFlags(rest);
   const region = flags.get('region') ?? 'la2';
+  const mongoUri = process.env.MONGODB_URI || undefined;
 
   switch (command) {
     case 'collect': {
@@ -69,6 +70,7 @@ async function main(): Promise<void> {
         tiers: tiers.length ? tiers : undefined,
         startTime,
         endTime,
+        mongoUri,
       });
       break;
     }
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
         region,
         patch: flags.get('patch'),
         minGames: Math.max(1, num(flags, 'min-games', 20)),
+        mongoUri,
       });
       break;
 

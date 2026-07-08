@@ -77,7 +77,13 @@ export async function collect(opts: CollectOptions): Promise<{ collected: number
   let mongoClient: MongoClient | undefined;
   let mongoStore: MongoStore | undefined;
   if (opts.mongoUri) {
-    mongoClient = new MongoClient(opts.mongoUri);
+    mongoClient = new MongoClient(opts.mongoUri, {
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
+      socketTimeoutMS: 60000,
+      retryWrites: true,
+      retryReads: true,
+    });
     await mongoClient.connect();
     mongoStore = new MongoStore(mongoClient, opts.region);
     await mongoStore.ensureIndexes();
@@ -225,6 +231,50 @@ async function _collect(
 
   log.info(`Round-robin por rango: ${tierOrder.length} tier(s), cuota ${perTierTarget} c/u.`);
 
+  // Estado global periódico: se imprime cada 30 s aunque no entren partidas
+  // (útil cuando se está recorriendo jugadores sin partidas nuevas).
+  const STATUS_INTERVAL_MS = 30_000;
+  const runStartedAt = Date.now();
+  const initialCollected = collected;
+  let playersProcessed = 0;
+  let lastStatusAt = Date.now();
+  const logGlobalStatus = (): void => {
+    const elapsedMin = (Date.now() - runStartedAt) / 60_000;
+    const sessionCollected = collected - initialCollected;
+    const rate = elapsedMin > 0 ? sessionCollected / elapsedMin : 0;
+    const remaining = Math.max(0, opts.maxMatches - collected);
+    const etaMin = rate > 0 ? remaining / rate : Infinity;
+    const etaTxt = !Number.isFinite(etaMin)
+      ? '–'
+      : etaMin >= 60
+        ? `${Math.floor(etaMin / 60)}h${Math.round(etaMin % 60)}m`
+        : `${Math.round(etaMin)}m`;
+    const pct = opts.maxMatches > 0 ? Math.round((collected / opts.maxMatches) * 100) : 0;
+    const tiersTxt = tierOrder
+      .map((t) => {
+        const c = tierCollected.get(t) ?? 0;
+        const mark = exhausted.has(t) ? ' (agotado)' : c >= perTierTarget ? ' (cuota)' : '';
+        return `${t} ${c}/${perTierTarget}${mark}`;
+      })
+      .join(' · ');
+    log.info(
+      `── Estado global ── ${collected}/${opts.maxMatches} (${pct}%) · ` +
+        `+${sessionCollected} esta sesión · ${rate.toFixed(1)} partidas/min · ETA ${etaTxt}`,
+    );
+    log.info(`   Rangos: ${tiersTxt}`);
+    log.info(`   Jugadores procesados: ${playersProcessed} · entradas sin puuid: ${missingPuuid}`);
+  };
+
+  // Buffer para flush a MongoDB cada 50 partidas
+  const pendingBuffer: Array<{ matchId: string; match: MatchDTO; tier: string }> = [];
+
+  const flushBuffer = async (): Promise<void> => {
+    if (!mongoStore || pendingBuffer.length === 0) return;
+    await mongoStore.bulkSave(pendingBuffer);
+    log.info(`MongoDB: ${pendingBuffer.length} partidas guardadas (total: ${collected})`);
+    pendingBuffer.length = 0;
+  };
+
   // Round-robin: en cada vuelta se procesa un jugador de cada rango que aún no
   // llegó a su cuota. Así el dataset queda balanceado aunque se corte a mitad.
   while (collected < opts.maxMatches && tierOrder.some((t) => !tierDone(t))) {
@@ -234,7 +284,7 @@ async function _collect(
 
       const next = await gens.get(tier)!.next();
       if (next.done) {
-        exhausted.add(tier); // sin más jugadores en este rango
+        exhausted.add(tier);
         continue;
       }
       const puuid = next.value;
@@ -258,7 +308,7 @@ async function _collect(
 
       for (const id of ids ?? []) {
         if (collected >= opts.maxMatches) break;
-        if ((tierCollected.get(tier) ?? 0) >= perTierTarget) break; // cuota del rango alcanzada
+        if ((tierCollected.get(tier) ?? 0) >= perTierTarget) break;
         if (seenMatches.has(id)) continue;
 
         let match: MatchDTO | null;
@@ -275,7 +325,10 @@ async function _collect(
         if (!match) continue;
 
         if (mongoStore) {
-          await mongoStore.save(id, match, tier);
+          pendingBuffer.push({ matchId: id, match, tier });
+          if (pendingBuffer.length >= 50) {
+            await flushBuffer();
+          }
         } else {
           store!.appendMatch(match);
           store!.appendMatchTier(id, tier);
@@ -293,8 +346,18 @@ async function _collect(
 
       store?.markPlayerSeen(puuid);
       seenPlayers.add(puuid);
+      playersProcessed++;
+      if (Date.now() - lastStatusAt >= STATUS_INTERVAL_MS) {
+        lastStatusAt = Date.now();
+        logGlobalStatus();
+      }
     }
   }
+
+  logGlobalStatus();
+
+  // Flush final: guarda las partidas que quedaron en el buffer al terminar la región
+  await flushBuffer();
 
   if (missingPuuid > 0) {
     log.warn(`${missingPuuid} entradas de liga sin puuid resoluble (omitidas).`);

@@ -11,6 +11,7 @@ import {
   TierEmblem,
   ROLE_LABEL,
   TIER_LABEL,
+  TIER_ORDER,
   type ItemStatRow,
   type StreakGameRow,
   type StreakPlayer,
@@ -207,6 +208,8 @@ export function StreaksPage() {
   const [maxGames, setMaxGames] = useState('');
   const [minWr, setMinWr] = useState('');
   const [maxWr, setMaxWr] = useState('');
+  const [sortBy, setSortBy] = useState<'racha' | 'rango' | 'winrate' | 'partidas'>('racha');
+  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc');
 
   useEffect(() => { setOffset(0); }, [s.region, s.patch, s.tier, s.role, s.champion, s.dateFrom, s.dateTo]);
 
@@ -240,15 +243,37 @@ export function StreaksPage() {
   }
   const total = resp?.total ?? 0;
 
-  const filteredPlayers = players.filter((p) => {
-    const wr = p.totalGames > 0 ? (p.wins / p.totalGames) * 100 : 0;
-    if (minStreak !== '' && p.longestWinStreak < Number(minStreak)) return false;
-    if (minGames !== '' && p.totalGames < Number(minGames)) return false;
-    if (maxGames !== '' && p.totalGames > Number(maxGames)) return false;
-    if (minWr !== '' && wr < Number(minWr)) return false;
-    if (maxWr !== '' && wr > Number(maxWr)) return false;
-    return true;
-  });
+  const filteredPlayers = players
+    .filter((p) => {
+      const wr = p.totalGames > 0 ? (p.wins / p.totalGames) * 100 : 0;
+      if (minStreak !== '' && p.longestWinStreak < Number(minStreak)) return false;
+      if (minGames !== '' && p.totalGames < Number(minGames)) return false;
+      if (maxGames !== '' && p.totalGames > Number(maxGames)) return false;
+      if (minWr !== '' && wr < Number(minWr)) return false;
+      if (maxWr !== '' && wr > Number(maxWr)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const dir = sortDir === 'desc' ? 1 : -1;
+      if (sortBy === 'rango') {
+        const tierA = mostCommonTier(matchesByPuuid.get(a.puuid) ?? []);
+        const tierB = mostCommonTier(matchesByPuuid.get(b.puuid) ?? []);
+        const oA = tierA ? (TIER_ORDER[tierA as keyof typeof TIER_ORDER] ?? 99) : 99;
+        const oB = tierB ? (TIER_ORDER[tierB as keyof typeof TIER_ORDER] ?? 99) : 99;
+        // desc = mejor rango primero (oA < oB), asc = peor rango primero
+        return oA !== oB ? (oA - oB) * dir : b.longestWinStreak - a.longestWinStreak;
+      }
+      if (sortBy === 'winrate') {
+        const wrA = a.totalGames > 0 ? a.wins / a.totalGames : 0;
+        const wrB = b.totalGames > 0 ? b.wins / b.totalGames : 0;
+        return wrB !== wrA ? (wrB - wrA) * dir : b.longestWinStreak - a.longestWinStreak;
+      }
+      if (sortBy === 'partidas') {
+        return b.totalGames !== a.totalGames ? (b.totalGames - a.totalGames) * dir : b.longestWinStreak - a.longestWinStreak;
+      }
+      // racha
+      return (b.longestWinStreak - a.longestWinStreak) * dir;
+    });
 
   // Detectar partidas en duo: matchId donde ≥2 jugadores rastreados comparten equipo (mismo win).
   const duoMatchIds = (() => {
@@ -312,6 +337,30 @@ export function StreaksPage() {
         >
           Sin duo
         </button>
+        <span className="streak-filter-group">
+          <label className="streak-filter-label">Orden</label>
+          {(['racha', 'rango', 'winrate', 'partidas'] as const).map((opt) => {
+            const active = sortBy === opt;
+            const label = opt === 'racha' ? 'Racha' : opt === 'rango' ? 'Rango' : opt === 'winrate' ? 'Win Rate' : 'Partidas';
+            const arrow = active ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '';
+            return (
+              <button
+                key={opt}
+                className={`pill${active ? ' on' : ''}`}
+                onClick={() => {
+                  if (active) {
+                    setSortDir((d) => d === 'desc' ? 'asc' : 'desc');
+                  } else {
+                    setSortBy(opt);
+                    setSortDir('desc');
+                  }
+                }}
+              >
+                {label}{arrow}
+              </button>
+            );
+          })}
+        </span>
       </div>
       {!s.region ? (
         <div className="empty">No hay datos. Recolecta primero.</div>
