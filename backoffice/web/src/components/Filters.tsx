@@ -3,11 +3,11 @@
  * El filtro de campeón solo refiltra la vista actual; para ir a la ficha del
  * campeón hay que hacer clic en él desde la lista. Las fechas filtran por game_creation.
  */
-import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { RolePills, TierFilter } from '@ui';
 import { useStore } from '../state/store';
 import { MultiChipSelect } from './MultiChipSelect';
+import { ChampionSelect } from './ChampionSelect';
 
 export function Filters() {
   const s = useStore();
@@ -20,12 +20,6 @@ export function Filters() {
   const champs = s.meta?.champions ?? [];
   const patches = s.meta?.patches ?? [];
 
-  const [champText, setChampText] = useState(s.champion === 'all' ? '' : s.champion);
-
-  useEffect(() => {
-    setChampText(s.champion === 'all' ? '' : s.champion);
-  }, [s.champion]);
-
   const selectedRegions = !s.region || s.region === 'all' ? [] : s.region.split(',');
   const serverOptions = s.servers.filter((sv) => s.dataRegions.includes(sv.key)).map((sv) => sv.key);
   const serverLabel = (key: string) => {
@@ -37,11 +31,8 @@ export function Filters() {
     navigate('/');
   };
 
-  const commitChampion = () => {
-    const v = champText.trim();
-    const match = champs.find((c) => c.toLowerCase() === v.toLowerCase());
-    s.setChampion(match || 'all');
-    if (!match) setChampText('');
+  const onChampionChange = (v: string) => {
+    s.setChampion(v);
     if (onChampOrPlayer) navigate('/');
   };
 
@@ -78,21 +69,12 @@ export function Filters() {
 
       <label>
         Campeón
-        <input
-          list="championList"
+        <ChampionSelect
+          options={champs}
+          value={s.champion}
+          onChange={onChampionChange}
           placeholder="Todos"
-          value={champText}
-          onChange={(e) => setChampText(e.target.value)}
-          onBlur={commitChampion}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
         />
-        <datalist id="championList">
-          {champs.map((c) => (
-            <option key={c} value={c} />
-          ))}
-        </datalist>
       </label>
 
       <label>

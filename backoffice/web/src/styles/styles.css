@@ -575,6 +575,19 @@ a.player-link:hover { color: var(--accent); text-decoration: underline; }
 }
 .mcs-opt:hover { background: color-mix(in oklab, var(--accent) 16%, transparent); }
 
+/* ---- ChampionSelect (dropdown con thumbnails) ---- */
+.champ-dropdown { max-height: 260px; }
+.champ-opt { display: flex; align-items: center; gap: 8px; }
+.champ-opt-ico {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  flex: 0 0 auto;
+  object-fit: cover;
+}
+.champ-chip { padding: 2px 5px 2px 4px; gap: 5px; }
+.champ-chip .champ-opt-ico { width: 18px; height: 18px; border-radius: 3px; }
+
 /* ---- Vista de jugador ---- */
 .player-avatar {
   width: 48px; height: 48px; border-radius: 8px;
