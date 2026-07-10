@@ -4,11 +4,13 @@
  *   - 'synergy' → con aliados del mismo equipo
  *   - 'full'    → ambas condiciones a la vez
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChampionIcon, RoleIcon, ROLE_LABEL, type RecommendRow, type RecommendResponse } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
 import { MultiChipSelect } from './MultiChipSelect';
+import { recommendFromProfile } from './profileRecommend';
+import { loadPools, savePools } from './recommendPools';
 import { champHref } from './links';
 
 export type RecommendMode = 'rivals' | 'synergy' | 'full';
@@ -29,6 +31,8 @@ const MODE_META: Record<RecommendMode, { title: string; subtitle: string }> = {
     subtitle: 'Win rate considerando tanto los aliados confirmados como los rivales vistos',
   },
 };
+
+const champIcon = (c: string) => <ChampionIcon name={c} lazy className="champ-opt-ico" />;
 
 function sampleClass(games: number): string {
   if (games === 0) return 'rec-sample-none';
@@ -93,12 +97,22 @@ export function RecommendBase({ mode }: Props) {
   const s = useStore();
   const champs = s.meta?.champions ?? [];
 
-  const [myChamps, setMyChamps] = useState<string[]>([]);
+  const [pools, setPools] = useState<Record<string, string[]>>(loadPools);
   const [enemies, setEnemies] = useState<string[]>([]);
   const [allies, setAllies] = useState<string[]>([]);
   const [role, setRole] = useState<string>('ALL');
+
+  const hasProfile = !!s.profile?.matches?.length;
+  const usingProfile = s.myMatches && hasProfile;
+
+  const myChamps = useMemo(() => pools[role] ?? [], [pools, role]);
+  const setMyChamps = (v: string[]) => setPools((p) => ({ ...p, [role]: v }));
   const [result, setResult] = useState<RecommendResponse | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    savePools(pools);
+  }, [pools]);
 
   const showEnemies = mode === 'rivals' || mode === 'full';
   const showAllies = mode === 'synergy' || mode === 'full';
@@ -111,7 +125,22 @@ export function RecommendBase({ mode }: Props) {
   }, [mode]);
 
   useEffect(() => {
-    if (!s.region || myChamps.length === 0) { setResult(null); return; }
+    // Modo "Mis partidas": cálculo local con el perfil efímero, sin tocar la
+    // base. Con pool vacío se listan todos los campeones jugados por el dueño.
+    if (usingProfile) {
+      setLoading(false);
+      setResult({
+        recommendations: recommendFromProfile(
+          s.profile!.matches,
+          myChamps,
+          showEnemies ? enemies : [],
+          showAllies ? allies : [],
+          role,
+        ),
+      });
+      return;
+    }
+    if (myChamps.length === 0 || !s.region) { setResult(null); return; }
     let cancel = false;
     setLoading(true);
     api
@@ -124,7 +153,7 @@ export function RecommendBase({ mode }: Props) {
       .then((r) => { if (!cancel) { setResult(r); setLoading(false); } })
       .catch(() => { if (!cancel) { setResult(null); setLoading(false); } });
     return () => { cancel = true; };
-  }, [s.region, s.patch, s.tier, s.dateFrom, s.dateTo, myChamps, enemies, allies, role, showEnemies, showAllies]);
+  }, [s.region, s.patch, s.tier, s.dateFrom, s.dateTo, myChamps, enemies, allies, role, showEnemies, showAllies, usingProfile, s.profile]);
 
   const recs = result?.recommendations ?? [];
   const withData = recs.filter((r) => r.games > 0);
@@ -139,7 +168,22 @@ export function RecommendBase({ mode }: Props) {
         <div>
           <div className="name">{meta.title}</div>
           <div className="meta">{meta.subtitle}</div>
+          {usingProfile && (
+            <div className="meta">
+              Calculando solo con las {s.profile!.matches.length} partidas de {s.profile!.riotId} · los
+              filtros globales (servidor/parche/rango/fechas) no aplican
+            </div>
+          )}
         </div>
+        {hasProfile && (
+          <button
+            className={`rec-role-btn ${s.myMatches ? 'active' : ''}`}
+            onClick={() => s.setMyMatches(!s.myMatches)}
+            title="Usar solo las partidas descargadas en tu Perfil (no se mezclan con la base global)"
+          >
+            Mis partidas ({s.profile!.matches.length})
+          </button>
+        )}
       </div>
 
       <div className="rec-form">
@@ -150,6 +194,7 @@ export function RecommendBase({ mode }: Props) {
               options={champs}
               value={myChamps}
               onChange={setMyChamps}
+              getIcon={champIcon}
               placeholder="Busca y agrega campeones…"
             />
           </label>
@@ -161,6 +206,7 @@ export function RecommendBase({ mode }: Props) {
                 options={champs}
                 value={allies}
                 onChange={setAllies}
+                getIcon={champIcon}
                 placeholder="Campeones en tu equipo…"
               />
             </label>
@@ -173,6 +219,7 @@ export function RecommendBase({ mode }: Props) {
                 options={champs}
                 value={enemies}
                 onChange={setEnemies}
+                getIcon={champIcon}
                 placeholder="Campeones rivales vistos…"
               />
             </label>
@@ -200,9 +247,9 @@ export function RecommendBase({ mode }: Props) {
         </div>
       </div>
 
-      {myChamps.length === 0 ? (
+      {myChamps.length === 0 && !usingProfile ? (
         <div className="empty">Agrega al menos un campeón a tu pool para ver recomendaciones.</div>
-      ) : !s.region ? (
+      ) : !s.region && !usingProfile ? (
         <div className="empty">No hay datos. Recolecta primero.</div>
       ) : loading ? (
         <div className="empty">Calculando…</div>

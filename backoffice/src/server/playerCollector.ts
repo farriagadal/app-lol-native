@@ -9,7 +9,7 @@ import { REGIONS } from '../collector/config';
 import type { MatchDTO } from '../collector/riotTypes';
 
 // Construir mapa region → routing regional desde la config existente
-const PLATFORM_TO_REGIONAL: Record<string, string> = Object.fromEntries(
+export const PLATFORM_TO_REGIONAL: Record<string, string> = Object.fromEntries(
   Object.entries(REGIONS).map(([k, v]) => [k.toUpperCase(), v.regional]),
 );
 

@@ -4,6 +4,7 @@
  * se abre un dropdown con las opciones disponibles (filtradas por texto).
  */
 import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 interface Props {
   options: string[];
@@ -13,9 +14,11 @@ interface Props {
   label?: string;
   /** Transforma una clave interna en etiqueta visible (chips y dropdown). */
   getLabel?: (v: string) => string;
+  /** Icono opcional por opción (ej. thumbnail de campeón), en chips y dropdown. */
+  getIcon?: (v: string) => ReactNode;
 }
 
-export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos', getLabel }: Props) {
+export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos', getLabel, getIcon }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const root = useRef<HTMLDivElement>(null);
@@ -71,7 +74,8 @@ export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos
           <span className="mcs-placeholder">{placeholder}</span>
         )}
         {value.map((v) => (
-          <span key={v} className="mcs-chip">
+          <span key={v} className={`mcs-chip${getIcon ? ' champ-chip' : ''}`}>
+            {getIcon?.(v)}
             {label(v)}
             <button
               className="mcs-chip-x"
@@ -101,10 +105,11 @@ export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos
         )}
       </div>
       {open && filtered.length > 0 && (
-        <ul className="mcs-dropdown">
+        <ul className={`mcs-dropdown${getIcon ? ' champ-dropdown' : ''}`}>
           {filtered.map((o) => (
-            <li key={o} className="mcs-opt" onMouseDown={(e) => { e.preventDefault(); add(o); }}>
-              {label(o)}
+            <li key={o} className={`mcs-opt${getIcon ? ' champ-opt' : ''}`} onMouseDown={(e) => { e.preventDefault(); add(o); }}>
+              {getIcon?.(o)}
+              <span>{label(o)}</span>
             </li>
           ))}
         </ul>

@@ -244,3 +244,30 @@ export interface CollectStatus {
   running: boolean;
   progress: CollectProgress | null; // último evento de progreso (para polling)
 }
+
+/**
+ * Red de conocimiento manual del analista (sinergias y counters entre
+ * campeones). Independiente de región/parche; se persiste en
+ * backoffice/knowledge/champion-network.json (versionable en git, fuera de
+ * data/ que se regenera). Copia sincronizada a mano con ui/src/domain/types.ts.
+ */
+export type KnowledgeEdgeKind = 'synergy' | 'counter';
+
+export interface KnowledgeEdge {
+  id: string;
+  kind: KnowledgeEdgeKind;
+  /** En synergy el par se normaliza a < b; en counter, `a` countea a `b`. */
+  a: string;
+  b: string;
+  /** Magnitud 1..3 (leve/notable/fuerte); el signo lo aporta kind + dirección. */
+  weight: 1 | 2 | 3;
+  /** TOP|JUNGLE|MIDDLE|BOTTOM|UTILITY; ausente = aplica en cualquier rol. */
+  role?: string;
+  note?: string;
+  updatedAt: string; // ISO
+}
+
+export interface KnowledgeNetwork {
+  version: 1;
+  edges: KnowledgeEdge[];
+}

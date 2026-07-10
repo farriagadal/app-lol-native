@@ -18,6 +18,7 @@ import {
   createAssetResolver,
   type AnalyticsMeta,
   type DataDragonDicts,
+  type ProfileData,
   type StatFilter,
 } from '@ui';
 import { api, type RegionsResponse } from '../api';
@@ -38,7 +39,27 @@ export const LS = {
       /* almacenamiento no disponible */
     }
   },
+  remove: (k: string): void => {
+    try {
+      localStorage.removeItem('bo:' + k);
+    } catch {
+      /* almacenamiento no disponible */
+    }
+  },
 };
+
+/** Perfil efímero (página Perfil): partidas propias cacheadas en el navegador. */
+function loadProfile(): ProfileData | null {
+  try {
+    const raw = JSON.parse(LS.get('profile', 'null'));
+    if (raw && typeof raw === 'object' && typeof raw.riotId === 'string' && Array.isArray(raw.matches)) {
+      return raw as ProfileData;
+    }
+  } catch {
+    /* valor corrupto → sin perfil */
+  }
+  return null;
+}
 
 const EMPTY_DD: DataDragonDicts = { items: {}, spells: {}, runes: {} };
 
@@ -67,6 +88,12 @@ interface Store {
   ddVersion: string | null;
   ready: boolean; // regiones cargadas al menos una vez
   reloadRegions: () => Promise<string[]>;
+  // perfil efímero (nunca se mezcla con la base de análisis)
+  profile: ProfileData | null;
+  setProfile: (p: ProfileData | null) => void;
+  /** Toggle "Mis partidas" de las páginas de recomendación. */
+  myMatches: boolean;
+  setMyMatches: (v: boolean) => void;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -89,6 +116,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [dataRegions, setDataRegions] = useState<string[]>([]);
   const [servers, setServers] = useState<{ key: string; label: string }[]>([]);
   const [ready, setReady] = useState(false);
+
+  const [profile, setProfileRaw] = useState<ProfileData | null>(loadProfile);
+  const setProfile = useCallback((p: ProfileData | null) => {
+    setProfileRaw(p);
+    if (p) LS.set('profile', JSON.stringify(p));
+    else LS.remove('profile');
+  }, []);
+
+  const [myMatches, setMyMatchesRaw] = useState(() => LS.get('myMatches') === '1');
+  const setMyMatches = useCallback((v: boolean) => {
+    setMyMatchesRaw(v);
+    LS.set('myMatches', v ? '1' : '0');
+  }, []);
 
   const [assetsLocal, setAssetsLocal] = useState(false);
   const [ddVersion, setDdVersion] = useState<string | null>(null);
@@ -217,6 +257,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ddVersion,
     ready,
     reloadRegions,
+    profile,
+    setProfile,
+    myMatches,
+    setMyMatches,
   };
 
   return (

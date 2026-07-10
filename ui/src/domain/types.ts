@@ -200,6 +200,37 @@ export interface RecommendResponse {
   recommendations: RecommendRow[];
 }
 
+/**
+ * Partidas efímeras del perfil del usuario (página Perfil del back office).
+ * Se descargan de la API de Riot y viven solo en localStorage del navegador;
+ * nunca se guardan en la base de análisis. Espejo de los tipos del servidor
+ * en backoffice/src/server/profileMatches.ts.
+ */
+export interface ProfileParticipant {
+  championName: string;
+  teamId: number;
+  win: boolean;
+  teamPosition: string;
+  /** Marca al dueño del perfil; se omite en el resto. */
+  me?: true;
+}
+
+export interface ProfileMatch {
+  matchId: string;
+  gameCreation: number;
+  gameDuration: number;
+  gameVersion: string;
+  participants: ProfileParticipant[];
+}
+
+export interface ProfileData {
+  riotId: string;
+  region: string;
+  puuid: string;
+  fetchedAt: number;
+  matches: ProfileMatch[];
+}
+
 export interface MatchListRow {
   matchId: string;
   patch: string | null;
@@ -243,4 +274,30 @@ export interface CollectStatus {
   totalMatches: number;
   running: boolean;
   progress: CollectProgress | null;
+}
+
+/**
+ * Red de conocimiento manual del analista (sinergias y counters entre
+ * campeones). Se persiste en backoffice/knowledge/champion-network.json vía
+ * GET/PUT /api/knowledge; el scoring se hace en el cliente.
+ */
+export type KnowledgeEdgeKind = 'synergy' | 'counter';
+
+export interface KnowledgeEdge {
+  id: string;
+  kind: KnowledgeEdgeKind;
+  /** En synergy el par se normaliza a < b; en counter, `a` countea a `b`. */
+  a: string;
+  b: string;
+  /** Magnitud 1..3 (leve/notable/fuerte); el signo lo aporta kind + dirección. */
+  weight: 1 | 2 | 3;
+  /** TOP|JUNGLE|MIDDLE|BOTTOM|UTILITY; ausente = aplica en cualquier rol. */
+  role?: string;
+  note?: string;
+  updatedAt: string; // ISO
+}
+
+export interface KnowledgeNetwork {
+  version: 1;
+  edges: KnowledgeEdge[];
 }

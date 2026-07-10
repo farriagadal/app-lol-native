@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "edges": [
+    {
+      "id": "t1",
+      "kind": "synergy",
+      "a": "Jhin",
+      "b": "Leona",
+      "weight": 2,
+      "updatedAt": "2026-07-10T00:00:00Z",
+      "role": "BOTTOM",
+      "note": "engage + cuarto disparo"
+    },
+    {
+      "id": "t2",
+      "kind": "counter",
+      "a": "Draven",
+      "b": "Jhin",
+      "weight": 3,
+      "updatedAt": "2026-07-10T00:00:00Z"
+    }
+  ]
+}

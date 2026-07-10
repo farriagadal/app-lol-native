@@ -4,9 +4,11 @@ import type {
   ChampionStatRow,
   CollectStatus,
   ItemGamesResponse,
+  KnowledgeNetwork,
   MatchListResponse,
   PlayerGamesResponse,
   MatchDetail,
+  ProfileData,
   RecommendResponse,
   StatFilter,
   StreaksResponse,
@@ -178,4 +180,35 @@ export const api = {
 
   collectPlayerStatus: (): Promise<{ phase: string; riotId?: string; downloaded?: number; skipped?: number; total?: number; error?: string }> =>
     fetch('/api/collect-player/status').then((r) => r.json()),
+
+  knowledgeGet: (): Promise<KnowledgeNetwork> =>
+    fetch('/api/knowledge').then((r) => r.json()),
+
+  knowledgeSave: (net: KnowledgeNetwork): Promise<{ ok: true }> =>
+    fetch('/api/knowledge', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(net),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        throw new Error(err?.error ?? `HTTP ${r.status}`);
+      }
+      return r.json();
+    }),
+
+  // Recolección efímera para la página Perfil: la respuesta va directo al
+  // navegador y no se persiste en el servidor.
+  profileMatches: (req: { apiKey: string; riotId: string; limit: number; region: string }): Promise<ProfileData> =>
+    fetch('/api/profile-matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => null);
+        throw new Error(err?.error ?? `HTTP ${r.status}`);
+      }
+      return r.json();
+    }),
 };

@@ -16,6 +16,8 @@ import { GamesPage } from './pages/GamesPage';
 import { RecommendPage } from './pages/RecommendPage';
 import { SynergyPickPage } from './pages/SynergyPickPage';
 import { FullPickPage } from './pages/FullPickPage';
+import { NetworkEditorPage } from './pages/NetworkEditorPage';
+import { ProfilePage } from './pages/ProfilePage';
 
 const TABS: SidebarTab[] = [
   { key: 'champions', label: 'Campeones' },
@@ -28,6 +30,8 @@ const TABS: SidebarTab[] = [
   { key: 'recommend', label: 'vs Rivales' },
   { key: 'synergy', label: 'Sinergias' },
   { key: 'fullpick', label: 'Pick completo' },
+  { key: 'network', label: 'Red' },
+  { key: 'profile', label: 'Perfil' },
   { key: 'collect', label: '⬇ Recolección', className: 'tab-collect' },
 ];
 
@@ -55,15 +59,12 @@ export function App() {
 
   const active = activeTabFromPath(loc.pathname);
   // Ocultar filtros en tabs sin datos tabulares y en páginas de detalle
-  const showFilters = active !== '' && active !== 'collect' && active !== 'faq';
+  const showFilters = active !== '' && active !== 'collect' && active !== 'faq' && active !== 'profile';
 
   return (
     <div className="layout">
       <Sidebar tabs={TABS} active={active} onSelect={selectTab} onBrand={() => selectTab('champions')} />
       <div className="content">
-        <header className="topbar">
-          <img className="ray-deco ray-top" src="/assets/ray.svg" alt="" />
-        </header>
         <main>
           {showFilters && <Filters />}
           <Routes>
@@ -78,6 +79,8 @@ export function App() {
             <Route path="/recommend" element={<RecommendPage />} />
             <Route path="/synergy" element={<SynergyPickPage />} />
             <Route path="/fullpick" element={<FullPickPage />} />
+            <Route path="/network" element={<NetworkEditorPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
             <Route path="/collect" element={<CollectPage />} />
             <Route path="/champ/:slug" element={<ChampionView />} />
             <Route path="/item/:id" element={<ItemView />} />

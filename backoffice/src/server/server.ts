@@ -14,7 +14,9 @@ import { downloadReplay, parseMatchId } from './replayDownloader';
 import { RiotClient } from '../collector/riotClient';
 import { lcuReplayDownload, lcuReplayWatch } from './replayLcu';
 import { collectPlayer, type PlayerCollectProgress } from './playerCollector';
+import { fetchProfileMatches } from './profileMatches';
 import { MongoStore } from '../collector/mongoStore';
+import { KnowledgeStore } from './knowledgeStore';
 import type { CollectRequest } from './types';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -26,6 +28,9 @@ const PORT = Number(process.env.PORT) || 4317;
 
 const db = new StatsDb(DATA_DIR);
 const runner = new CollectRunner(DATA_DIR);
+// Red de conocimiento manual (sinergias/counters), fuera de data/ para que
+// sobreviva a regeneraciones de la base y pueda versionarse en git.
+const knowledge = new KnowledgeStore(path.resolve(process.cwd(), 'knowledge'));
 
 // Si MONGODB_URI está definida, conectar para servir Partidas desde Atlas.
 let mongoStore: MongoStore | null = null;
@@ -189,6 +194,24 @@ const server = http.createServer(async (req, res) => {
         : await db.counterStats(region, f);
       sendJson(res, 200, data);
       return;
+    }
+    if (p === '/api/knowledge' && req.method === 'GET') {
+      sendJson(res, 200, knowledge.load());
+      return;
+    }
+    if (p === '/api/knowledge' && req.method === 'PUT') {
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return sendJson(res, 400, { error: 'JSON inválido' });
+      }
+      try {
+        knowledge.save(body);
+        return sendJson(res, 200, { ok: true });
+      } catch (err) {
+        return sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+      }
     }
     if (p === '/api/replay-watch' && req.method === 'POST') {
       const matchId = url.searchParams.get('matchId');
@@ -382,6 +405,38 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/collect-player/status' && req.method === 'GET') {
       return sendJson(res, 200, playerCollectProgress ?? { phase: 'idle' });
+    }
+    if (p === '/api/profile-matches' && req.method === 'POST') {
+      // Recolección efímera para la página Perfil: descarga y responde en la
+      // misma petición, sin persistir nada en el store ni en la DB.
+      const body = await readBody(req);
+      let parsed: { apiKey?: string; riotId?: string; limit?: number; region?: string };
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return sendJson(res, 400, { error: 'JSON inválido' });
+      }
+      const { apiKey, riotId, limit, region } = parsed;
+      if (!apiKey || !riotId || !region) {
+        return sendJson(res, 400, { error: 'faltan campos: apiKey, riotId, region' });
+      }
+      if (!REGIONS[region.toLowerCase() as keyof typeof REGIONS]) {
+        return sendJson(res, 400, { error: `Región no soportada: ${region}` });
+      }
+      const safeLimit = Math.min(100, Math.max(1, Number(limit) || 20));
+      console.log(`[profile] ${riotId} en ${region}, hasta ${safeLimit} partidas (efímero)`);
+      try {
+        const result = await fetchProfileMatches(apiKey, riotId, safeLimit, region);
+        if (!result) return sendJson(res, 404, { error: `Jugador "${riotId}" no encontrado en ${region}.` });
+        return sendJson(res, 200, result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('401') || msg.includes('403')) {
+          return sendJson(res, 400, { error: 'API key inválida o expirada.' });
+        }
+        if (msg.startsWith('Formato inválido')) return sendJson(res, 400, { error: msg });
+        return sendJson(res, 502, { error: msg });
+      }
     }
     if (p === '/api/collect-player' && req.method === 'POST') {
       const body = await readBody(req);
