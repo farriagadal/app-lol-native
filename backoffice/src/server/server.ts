@@ -11,6 +11,7 @@ import { StatsDb } from './db';
 import { CollectRunner } from './collectRunner';
 import { REGIONS } from '../collector/config';
 import { downloadReplay, parseMatchId } from './replayDownloader';
+import { RiotClient } from '../collector/riotClient';
 import { lcuReplayDownload, lcuReplayWatch } from './replayLcu';
 import { collectPlayer, type PlayerCollectProgress } from './playerCollector';
 import { MongoStore } from '../collector/mongoStore';
@@ -46,6 +47,28 @@ if (MONGO_URI) {
 }
 let replayWatchBusy = false;
 let playerCollectProgress: PlayerCollectProgress | null = null;
+
+/**
+ * Últimos 20 matchIds del jugador (cualquier cola) según la API de Riot, para
+ * verificar que un replay siga disponible antes de intentar descargarlo.
+ * Devuelve null si la consulta no se pudo hacer (la verificación es best-effort
+ * y en ese caso se sigue con el intento de descarga normal).
+ */
+// (export solo para que compile mientras la validación de abajo está comentada)
+export async function recentMatchIds(platform: string, apiKey: string, puuid: string): Promise<string[] | null> {
+  const regional = REGIONS[platform.toLowerCase() as keyof typeof REGIONS]?.regional;
+  if (!regional) return null;
+  try {
+    return await new RiotClient(apiKey).get<string[]>(
+      regional,
+      `/lol/match/v5/matches/by-puuid/${encodeURIComponent(puuid)}/ids?start=0&count=20`,
+      2,
+    );
+  } catch (err) {
+    console.warn(`[replay] No se pudo verificar el historial reciente: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -175,6 +198,22 @@ const server = http.createServer(async (req, res) => {
       if (replayWatchBusy) {
         return sendJson(res, 409, { error: 'Ya hay un replay abriéndose. Espera a que termine.' });
       }
+      // Verificación previa: el replay solo se puede bajar si la partida sigue
+      // entre las últimas 20 del jugador (historial reciente del cliente de LoL).
+      // DESACTIVADA temporalmente para pruebas — descomentar para reactivarla.
+      // const watchPuuid = url.searchParams.get('puuid');
+      // const watchApiKey = url.searchParams.get('apiKey');
+      // if (watchPuuid && watchApiKey) {
+      //   const recent = await recentMatchIds(parsed.platform, watchApiKey, watchPuuid);
+      //   if (recent && !recent.includes(matchId)) {
+      //     console.warn(`[lcu] ${matchId} ya no está entre las últimas 20 partidas del jugador; no se intenta descargar.`);
+      //     return sendJson(res, 409, {
+      //       error:
+      //         'Esta partida ya no está entre las últimas 20 del jugador, ' +
+      //         'así que su replay ya no está disponible para descargar.',
+      //     });
+      //   }
+      // }
       replayWatchBusy = true;
       console.log(`[lcu] Iniciando watch ${matchId}`);
       try {

@@ -92,6 +92,8 @@ export interface SynergyStatRow {
 /** Una partida concreta en la que un participante llevó cierto ítem (resumen). */
 export interface ItemGameRow {
   matchId: string;
+  /** Jugador de la fila (para verificar disponibilidad del replay). */
+  puuid?: string | null;
   championName: string;
   role: string;           // team_position
   win: boolean;

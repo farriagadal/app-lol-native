@@ -16,6 +16,7 @@ import {
   type ItemGameRow,
   type PlayerGamesResponse,
   type MatchDetail,
+  type StatFilter,
 } from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
@@ -39,7 +40,7 @@ function newestPatch(patches: (string | null)[]): string | null {
   }, null);
 }
 
-function GameRow({ g, region, showReplay, itemStats }: { g: ItemGameRow; region: string; showReplay: boolean; itemStats: Map<number, ItemStatRow> }) {
+function GameRow({ g, region, showReplay, itemStats, puuid }: { g: ItemGameRow; region: string; showReplay: boolean; itemStats: Map<number, ItemStatRow>; puuid?: string }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<MatchDetail | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -88,7 +89,7 @@ function GameRow({ g, region, showReplay, itemStats }: { g: ItemGameRow; region:
               className="dl-btn"
               title="Reproducir replay en el cliente de LoL"
               disabled={downloading}
-              onClick={(e) => { e.stopPropagation(); void watchReplay(g.matchId, setDownloading); }}
+              onClick={(e) => { e.stopPropagation(); void watchReplay(g.matchId, setDownloading, puuid); }}
             >{downloading ? '…' : '▶'}</button>
           )}
         </td>
@@ -133,28 +134,35 @@ export function PlayerView() {
     setChampText(match || '');
   };
 
-  useEffect(() => { setOffset(0); }, [puuid, s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo]);
+  // El historial del jugador NO hereda los filtros globales (parche/rango/rol/fechas):
+  // en esta página la barra de filtros está oculta, así que aplicarlos confunde
+  // (partidas "desaparecen"). Solo se filtra por el campeón elegido aquí.
+  const playerFilter = (champion: string): StatFilter => ({
+    patch: 'all', tier: 'all', role: 'ALL', champion,
+  });
+
+  useEffect(() => { setOffset(0); }, [puuid, s.region, champ]);
 
   useEffect(() => {
     let cancel = false;
     if (!s.region || !puuid) { setResp(null); setLoading(false); return; }
     setLoading(true);
-    api.playerGames(s.region, decodeURIComponent(puuid), s.statFilter(champ), PAGE, offset)
+    api.playerGames(s.region, decodeURIComponent(puuid), playerFilter(champ), PAGE, offset)
       .then((r) => { if (!cancel) { setResp(r); setLoading(false); } })
       .catch(() => { if (!cancel) { setResp(null); setLoading(false); } });
     return () => { cancel = true; };
-  }, [puuid, s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo, offset]);
+  }, [puuid, s.region, champ, offset]);
 
   useEffect(() => {
     if (!s.region) { setItemStatsMap(new Map()); return; }
-    api.stats<ItemStatRow>('items', s.region, s.statFilter(champ))
+    api.stats<ItemStatRow>('items', s.region, playerFilter(champ))
       .then((rows) => {
         const m = new Map<number, ItemStatRow>();
         for (const r of rows) m.set(r.item, r);
         setItemStatsMap(m);
       })
       .catch(() => {});
-  }, [s.region, s.patch, s.tier, s.role, champ, s.dateFrom, s.dateTo]);
+  }, [s.region, champ]);
 
   const total = resp?.total ?? 0;
   const games = resp?.games ?? [];
@@ -180,7 +188,7 @@ export function PlayerView() {
   const playRandom = () => {
     if (!playable.length || randomBusy) return;
     const g = playable[Math.floor(Math.random() * playable.length)];
-    void watchReplay(g.matchId, setRandomBusy);
+    void watchReplay(g.matchId, setRandomBusy, decodeURIComponent(puuid));
   };
 
   return (
@@ -287,7 +295,7 @@ export function PlayerView() {
             </thead>
             <tbody>
               {games.map((g) => (
-                <GameRow key={g.matchId} g={g} region={s.region} showReplay={g.patch === newest} itemStats={itemStatsMap} />
+                <GameRow key={g.matchId} g={g} region={s.region} showReplay={g.patch === newest} itemStats={itemStatsMap} puuid={decodeURIComponent(puuid)} />
               ))}
             </tbody>
           </table>

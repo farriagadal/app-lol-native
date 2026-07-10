@@ -367,6 +367,7 @@ export class StatsDb {
 
     const mapRow = (r: Record<string, number | string | null>): ItemGameRow => ({
       matchId: String(r.match_id),
+      puuid: r.puuid == null ? null : String(r.puuid),
       championName: String(r.champion_name),
       role: String(r.team_position),
       win: Number(r.win) === 1,
@@ -389,7 +390,7 @@ export class StatsDb {
     });
 
     const gameSql = `
-      SELECT m.match_id, p.champion_name, p.team_position, p.win,
+      SELECT m.match_id, p.puuid, p.champion_name, p.team_position, p.win,
              p.kills, p.deaths, p.assists, p.kda, p.cs, p.kill_participation,
              m.game_duration, m.game_creation, m.tier, m.patch,
              p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item6,

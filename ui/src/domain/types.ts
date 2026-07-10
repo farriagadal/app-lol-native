@@ -96,6 +96,8 @@ export interface SynergyStatRow {
 
 export interface ItemGameRow {
   matchId: string;
+  /** Jugador de la fila (para verificar disponibilidad del replay). */
+  puuid?: string | null;
   championName: string;
   role: string;
   win: boolean;

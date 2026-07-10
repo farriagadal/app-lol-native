@@ -13,7 +13,9 @@ export function Filters() {
   const s = useStore();
   const navigate = useNavigate();
   const loc = useLocation();
-  const onItem = loc.pathname.startsWith('/item/');
+  // Detalles de campeón/jugador no reaccionan al filtro de campeón: al cambiarlo
+  // se vuelve a la lista. El resto de vistas (listas y detalle de ítem) refiltran in situ.
+  const onChampOrPlayer = /^\/(champ|player)\//.test(loc.pathname);
 
   const champs = s.meta?.champions ?? [];
   const patches = s.meta?.patches ?? [];
@@ -40,7 +42,7 @@ export function Filters() {
     const match = champs.find((c) => c.toLowerCase() === v.toLowerCase());
     s.setChampion(match || 'all');
     if (!match) setChampText('');
-    if (!onItem && loc.pathname !== '/') navigate('/');
+    if (onChampOrPlayer) navigate('/');
   };
 
   const selectedPatches = !s.patch || s.patch === 'all' ? [] : s.patch.split(',');

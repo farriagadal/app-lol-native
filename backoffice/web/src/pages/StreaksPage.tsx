@@ -114,7 +114,7 @@ function GameRow({ g, region, isStreak, showReplay, itemStats }: { g: StreakGame
               className="dl-btn"
               title="Reproducir replay en el cliente de LoL"
               disabled={downloading}
-              onClick={(e) => { e.stopPropagation(); void watchReplay(g.matchId, setDownloading); }}
+              onClick={(e) => { e.stopPropagation(); void watchReplay(g.matchId, setDownloading, g.puuid); }}
             >{downloading ? '…' : '▶'}</button>
           )}
         </td>

@@ -6,13 +6,20 @@
 export async function watchReplay(
   matchId: string,
   setLoading: (v: boolean) => void,
+  puuid?: string | null,
 ): Promise<void> {
   setLoading(true);
   try {
-    const res = await fetch(
-      `/api/replay-watch?matchId=${encodeURIComponent(matchId)}`,
-      { method: 'POST' },
-    );
+    const params = new URLSearchParams({ matchId });
+    // Si conocemos al jugador y hay API key guardada, el server verifica antes
+    // de descargar que la partida siga entre sus últimas 20 (si no, el replay
+    // ya no está disponible en el cliente de LoL).
+    const apiKey = (localStorage.getItem('bo:apiKey') ?? '').trim();
+    if (puuid && apiKey) {
+      params.set('puuid', puuid);
+      params.set('apiKey', apiKey);
+    }
+    const res = await fetch(`/api/replay-watch?${params.toString()}`, { method: 'POST' });
     if (!res.ok) {
       let msg = `Error ${res.status}`;
       try {
