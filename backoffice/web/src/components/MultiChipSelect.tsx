@@ -68,7 +68,10 @@ export function MultiChipSelect({ options, value, onChange, placeholder = 'Todos
     <div className="mcs-root" ref={root}>
       <div
         className={`mcs-field${open ? ' mcs-open' : ''}`}
-        onClick={() => { setOpen(true); input.current?.focus(); }}
+        // preventDefault: el campo suele vivir dentro de un <label>; sin esto el
+        // navegador reenvía el clic al primer control (la × del primer chip) y
+        // los chips se van borrando con cada clic.
+        onClick={(e) => { e.preventDefault(); setOpen(true); input.current?.focus(); }}
       >
         {value.length === 0 && !query && (
           <span className="mcs-placeholder">{placeholder}</span>

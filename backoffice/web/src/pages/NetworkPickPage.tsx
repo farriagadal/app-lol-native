@@ -4,13 +4,14 @@
  * sinergias/counters (pestaña Red). El score es la suma de pesos de las
  * aristas aplicables, con desglose por interacción.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChampionIcon, RoleIcon, ROLE_LABEL } from '@ui';
+import { ChampionIcon, RoleIcon, ROLE_LABEL, type ProfileMatch } from '@ui';
 import { useStore } from '../state/store';
 import { useKnowledge } from '../state/knowledge';
 import { MultiChipSelect } from '../components/MultiChipSelect';
-import { loadPools, savePools } from '../components/recommendPools';
+import { MatchHistory } from '../components/MatchHistory';
+import { useRecommendSelection, type RecommendSelection } from '../components/RecommendBase';
 import { scorePool, type NetworkScore, type ScoreContribution } from '../components/networkScore';
 import { champHref } from '../components/links';
 
@@ -74,23 +75,29 @@ function ScoreRow({ s, rank, onEdit }: { s: NetworkScore; rank: number; onEdit: 
   );
 }
 
-export function NetworkPickPage() {
+export function NetworkPickPage({ selection }: { selection?: RecommendSelection } = {}) {
   const s = useStore();
   const k = useKnowledge();
   const navigate = useNavigate();
   const champs = s.meta?.champions ?? [];
 
-  const [pools, setPools] = useState<Record<string, string[]>>(loadPools);
-  const [allies, setAllies] = useState<string[]>([]);
-  const [enemies, setEnemies] = useState<string[]>([]);
-  const [role, setRole] = useState<string>('ALL');
+  const own = useRecommendSelection();
+  const { pools, setPools, allies, setAllies, enemies, setEnemies, role, setRole } = selection ?? own;
+  const [showHistory, setShowHistory] = useState(false);
+
+  const hasProfile = !!s.profile?.matches?.length;
+
+  // Importar los campeones de una partida del historial a los selectores
+  const importMatch = (m: ProfileMatch) => {
+    const me = m.participants.find((p) => p.me);
+    if (!me) return;
+    setAllies(m.participants.filter((p) => p.teamId === me.teamId && !p.me).map((p) => p.championName));
+    setEnemies(m.participants.filter((p) => p.teamId !== me.teamId).map((p) => p.championName));
+    setShowHistory(false);
+  };
 
   const myChamps = useMemo(() => pools[role] ?? [], [pools, role]);
   const setMyChamps = (v: string[]) => setPools((p) => ({ ...p, [role]: v }));
-
-  useEffect(() => {
-    savePools(pools);
-  }, [pools]);
 
   // Sin fetch: la red completa está en memoria y el score es una suma de lookups.
   const scores = useMemo(
@@ -113,10 +120,30 @@ export function NetworkPickPage() {
             <div className="meta">Con rol «Todos» solo aplican las interacciones globales (sin rol asignado)</div>
           )}
         </div>
-        <button className="rec-role-btn" onClick={() => navigate('/network')}>
-          Editar red ({k.net.edges.length})
-        </button>
+        <div className="rec-role-btns">
+          {hasProfile && (
+            <button
+              className={`rec-role-btn ${showHistory ? 'active' : ''}`}
+              onClick={() => setShowHistory((v) => !v)}
+              title="Historial de tu Perfil: haz clic en una partida para importar sus campeones a aliados/rivales"
+            >
+              Mis partidas ({s.profile!.matches.length})
+            </button>
+          )}
+          <button className="rec-role-btn" onClick={() => navigate('/network')}>
+            Editar red ({k.net.edges.length})
+          </button>
+        </div>
       </div>
+
+      {showHistory && hasProfile && (
+        <div className="rec-history-panel">
+          <div className="meta">
+            Últimas partidas de {s.profile!.riotId} — haz clic en una para importar sus campeones a aliados y rivales.
+          </div>
+          <MatchHistory matches={s.profile!.matches} onPick={importMatch} />
+        </div>
+      )}
 
       <div className="rec-form">
         <div className="rec-field-group rec-field-group-3">

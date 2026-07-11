@@ -9,6 +9,7 @@ import type {
   PlayerGamesResponse,
   MatchDetail,
   ProfileData,
+  RecommendGamesResponse,
   RecommendResponse,
   StatFilter,
   StreaksResponse,
@@ -134,6 +135,32 @@ export const api = {
           tier: f.tier,
           dateFrom: f.dateFrom,
           dateTo: f.dateTo,
+        }),
+    ).then((r) => r.json()),
+
+  // Partidas individuales detrás de un win rate de recommend ("+ Detalle")
+  recommendGames: (
+    region: string,
+    champion: string,
+    enemies: string[],
+    allies: string[],
+    role: string,
+    f: Pick<StatFilter, 'patch' | 'tier' | 'dateFrom' | 'dateTo'>,
+    limit = 20,
+  ): Promise<RecommendGamesResponse> =>
+    fetch(
+      '/api/recommend-games?' +
+        qs({
+          region,
+          champion,
+          enemies: enemies.join(','),
+          allies: allies.join(','),
+          role,
+          patch: f.patch,
+          tier: f.tier,
+          dateFrom: f.dateFrom,
+          dateTo: f.dateTo,
+          limit,
         }),
     ).then((r) => r.json()),
 

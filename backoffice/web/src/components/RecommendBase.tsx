@@ -5,11 +5,14 @@
  *   - 'full'    → ambas condiciones a la vez
  */
 import { useEffect, useMemo, useState } from 'react';
-import { ChampionIcon, RoleIcon, ROLE_LABEL, type RecommendRow, type RecommendResponse } from '@ui';
+import {
+  ChampionIcon, RoleIcon, ROLE_LABEL,
+  type ProfileMatch, type RecommendGamesResponse, type RecommendRow, type RecommendResponse,
+} from '@ui';
 import { api } from '../api';
 import { useStore } from '../state/store';
 import { MultiChipSelect } from './MultiChipSelect';
-import { recommendFromProfile } from './profileRecommend';
+import { MatchHistory } from './MatchHistory';
 import { loadPools, savePools } from './recommendPools';
 import { champHref } from './links';
 
@@ -54,7 +57,12 @@ function WrColor({ wr }: { wr: number }) {
   return <span className={`rec-wr ${cls}`}>{pct}%</span>;
 }
 
-function ChampCard({ row, rank }: { row: RecommendRow; rank: number }) {
+function ChampCard({ row, rank, detailOpen, onDetail }: {
+  row: RecommendRow;
+  rank: number;
+  detailOpen: boolean;
+  onDetail: () => void;
+}) {
   return (
     <a href={champHref(row.championName)} className="rec-card cell-link">
       <span className={`rec-rank ${rankClass(rank)}`}>{rank + 1}°</span>
@@ -66,11 +74,63 @@ function ChampCard({ row, rank }: { row: RecommendRow; rank: number }) {
           <span className={`rec-sample ${sampleClass(row.games)}`}>
             {row.wins}V / {row.games - row.wins}D · {row.games} partidas
           </span>
+          <button
+            className={`rec-role-btn rec-detail-btn ${detailOpen ? 'active' : ''}`}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDetail(); }}
+            title="Ver las partidas detrás de este win rate"
+          >
+            {detailOpen ? 'Ocultar detalle' : '+ Detalle'}
+          </button>
         </>
       ) : (
         <span className="rec-sample rec-sample-none">Sin datos</span>
       )}
     </a>
+  );
+}
+
+/** Card inferior con las partidas reales detrás del win rate de un campeón. */
+function DetailGames({ champ, data, loading }: {
+  champ: string;
+  data: RecommendGamesResponse | null;
+  loading: boolean;
+}) {
+  return (
+    <div className="rec-history-panel rec-detail-panel">
+      <div className="meta">
+        {loading
+          ? `Cargando partidas de ${champ}…`
+          : data
+            ? `Partidas de ${champ} con los filtros actuales — ${Math.min(data.games.length, data.total)} de ${data.total}`
+            : `Sin partidas de ${champ} para el filtro actual.`}
+      </div>
+      {data && data.games.length > 0 && (
+        <div className="rec-history">
+          {data.games.map((g) => {
+            const myBlue = g.teamId === 100;
+            return (
+              <div key={g.region + g.matchId} className="rec-history-row rec-detail-row">
+                <span className={`rec-history-result ${g.win ? 'win' : 'loss'}`}>{g.win ? 'V' : 'D'}</span>
+                <span className="rec-history-team">
+                  {(myBlue ? g.blueChamps : g.redChamps).map((c, i) => (
+                    <span key={i} className={c === champ ? 'rec-history-hl' : undefined}>
+                      <ChampionIcon name={c} lazy />
+                    </span>
+                  ))}
+                </span>
+                <span className="rec-history-vs">vs</span>
+                <span className="rec-history-team">
+                  {(myBlue ? g.redChamps : g.blueChamps).map((c, i) => <ChampionIcon key={i} name={c} lazy />)}
+                </span>
+                <span className="rec-history-meta">
+                  {g.patch ? `parche ${g.patch} · ` : ''}{g.region.toUpperCase()} · {Math.round(g.gameDuration / 60)} min · {new Date(g.gameCreation).toLocaleDateString()}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -89,30 +149,70 @@ function ContextChips({ label, champs }: { label: string; champs: string[] }) {
   );
 }
 
-interface Props {
-  mode: RecommendMode;
+/**
+ * Selección compartida (pool por rol, aliados, rivales, rol). FullPickPage la
+ * crea una sola vez y la pasa a sus dos vistas para que alternar entre
+ * "Red manual" y "Winrates (datos)" no pierda nada; las páginas sueltas usan
+ * la suya propia.
+ */
+export interface RecommendSelection {
+  pools: Record<string, string[]>;
+  setPools: React.Dispatch<React.SetStateAction<Record<string, string[]>>>;
+  allies: string[];
+  setAllies: (v: string[]) => void;
+  enemies: string[];
+  setEnemies: (v: string[]) => void;
+  role: string;
+  setRole: (v: string) => void;
 }
 
-export function RecommendBase({ mode }: Props) {
+export function useRecommendSelection(): RecommendSelection {
+  const [pools, setPools] = useState<Record<string, string[]>>(loadPools);
+  const [allies, setAllies] = useState<string[]>([]);
+  const [enemies, setEnemies] = useState<string[]>([]);
+  const [role, setRole] = useState<string>('ALL');
+
+  useEffect(() => {
+    savePools(pools);
+  }, [pools]);
+
+  return { pools, setPools, allies, setAllies, enemies, setEnemies, role, setRole };
+}
+
+interface Props {
+  mode: RecommendMode;
+  /** Selección externa compartida; si falta, el componente usa una propia. */
+  selection?: RecommendSelection;
+}
+
+export function RecommendBase({ mode, selection }: Props) {
   const s = useStore();
   const champs = s.meta?.champions ?? [];
 
-  const [pools, setPools] = useState<Record<string, string[]>>(loadPools);
-  const [enemies, setEnemies] = useState<string[]>([]);
-  const [allies, setAllies] = useState<string[]>([]);
-  const [role, setRole] = useState<string>('ALL');
+  const own = useRecommendSelection();
+  const { pools, setPools, allies, setAllies, enemies, setEnemies, role, setRole } = selection ?? own;
+  const [showHistory, setShowHistory] = useState(false);
 
   const hasProfile = !!s.profile?.matches?.length;
-  const usingProfile = s.myMatches && hasProfile;
+
+  // Importar los campeones de una partida del historial a los selectores
+  const importMatch = (m: ProfileMatch) => {
+    const me = m.participants.find((p) => p.me);
+    if (!me) return;
+    if (showAllies) setAllies(m.participants.filter((p) => p.teamId === me.teamId && !p.me).map((p) => p.championName));
+    if (showEnemies) setEnemies(m.participants.filter((p) => p.teamId !== me.teamId).map((p) => p.championName));
+    setShowHistory(false);
+  };
 
   const myChamps = useMemo(() => pools[role] ?? [], [pools, role]);
   const setMyChamps = (v: string[]) => setPools((p) => ({ ...p, [role]: v }));
   const [result, setResult] = useState<RecommendResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    savePools(pools);
-  }, [pools]);
+  // "+ Detalle": campeón cuyas partidas se listan en la card inferior
+  const [detail, setDetail] = useState<string | null>(null);
+  const [detailGames, setDetailGames] = useState<RecommendGamesResponse | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const showEnemies = mode === 'rivals' || mode === 'full';
   const showAllies = mode === 'synergy' || mode === 'full';
@@ -125,21 +225,6 @@ export function RecommendBase({ mode }: Props) {
   }, [mode]);
 
   useEffect(() => {
-    // Modo "Mis partidas": cálculo local con el perfil efímero, sin tocar la
-    // base. Con pool vacío se listan todos los campeones jugados por el dueño.
-    if (usingProfile) {
-      setLoading(false);
-      setResult({
-        recommendations: recommendFromProfile(
-          s.profile!.matches,
-          myChamps,
-          showEnemies ? enemies : [],
-          showAllies ? allies : [],
-          role,
-        ),
-      });
-      return;
-    }
     if (myChamps.length === 0 || !s.region) { setResult(null); return; }
     let cancel = false;
     setLoading(true);
@@ -153,7 +238,29 @@ export function RecommendBase({ mode }: Props) {
       .then((r) => { if (!cancel) { setResult(r); setLoading(false); } })
       .catch(() => { if (!cancel) { setResult(null); setLoading(false); } });
     return () => { cancel = true; };
-  }, [s.region, s.patch, s.tier, s.dateFrom, s.dateTo, myChamps, enemies, allies, role, showEnemies, showAllies, usingProfile, s.profile]);
+  }, [s.region, s.patch, s.tier, s.dateFrom, s.dateTo, myChamps, enemies, allies, role, showEnemies, showAllies]);
+
+  // Cargar las partidas del detalle cuando cambia el campeón elegido o los filtros
+  useEffect(() => {
+    if (!detail || !s.region) { setDetailGames(null); return; }
+    let cancel = false;
+    setDetailLoading(true);
+    api
+      .recommendGames(s.region, detail, showEnemies ? enemies : [], showAllies ? allies : [], role, {
+        patch: s.patch,
+        tier: s.tier,
+        dateFrom: s.dateFrom || undefined,
+        dateTo: s.dateTo || undefined,
+      })
+      .then((r) => { if (!cancel) { setDetailGames(r); setDetailLoading(false); } })
+      .catch(() => { if (!cancel) { setDetailGames(null); setDetailLoading(false); } });
+    return () => { cancel = true; };
+  }, [detail, s.region, s.patch, s.tier, s.dateFrom, s.dateTo, enemies, allies, role, showEnemies, showAllies]);
+
+  // Cerrar el detalle si su campeón sale del pool
+  useEffect(() => {
+    if (detail && !myChamps.includes(detail)) setDetail(null);
+  }, [detail, myChamps]);
 
   const recs = result?.recommendations ?? [];
   const withData = recs.filter((r) => r.games > 0);
@@ -168,23 +275,27 @@ export function RecommendBase({ mode }: Props) {
         <div>
           <div className="name">{meta.title}</div>
           <div className="meta">{meta.subtitle}</div>
-          {usingProfile && (
-            <div className="meta">
-              Calculando solo con las {s.profile!.matches.length} partidas de {s.profile!.riotId} · los
-              filtros globales (servidor/parche/rango/fechas) no aplican
-            </div>
-          )}
         </div>
         {hasProfile && (
           <button
-            className={`rec-role-btn ${s.myMatches ? 'active' : ''}`}
-            onClick={() => s.setMyMatches(!s.myMatches)}
-            title="Usar solo las partidas descargadas en tu Perfil (no se mezclan con la base global)"
+            className={`rec-role-btn ${showHistory ? 'active' : ''}`}
+            onClick={() => setShowHistory((v) => !v)}
+            title="Historial de tu Perfil: haz clic en una partida para importar sus campeones a aliados/rivales"
           >
             Mis partidas ({s.profile!.matches.length})
           </button>
         )}
       </div>
+
+      {showHistory && hasProfile && (
+        <div className="rec-history-panel">
+          <div className="meta">
+            Últimas partidas de {s.profile!.riotId} — haz clic en una para importar sus campeones a
+            {showAllies && showEnemies ? ' aliados y rivales' : showAllies ? ' aliados' : ' rivales'}.
+          </div>
+          <MatchHistory matches={s.profile!.matches} onPick={importMatch} />
+        </div>
+      )}
 
       <div className="rec-form">
         <div className={`rec-field-group ${showAllies && showEnemies ? 'rec-field-group-3' : ''}`}>
@@ -247,9 +358,9 @@ export function RecommendBase({ mode }: Props) {
         </div>
       </div>
 
-      {myChamps.length === 0 && !usingProfile ? (
+      {myChamps.length === 0 ? (
         <div className="empty">Agrega al menos un campeón a tu pool para ver recomendaciones.</div>
-      ) : !s.region && !usingProfile ? (
+      ) : !s.region ? (
         <div className="empty">No hay datos. Recolecta primero.</div>
       ) : loading ? (
         <div className="empty">Calculando…</div>
@@ -265,9 +376,16 @@ export function RecommendBase({ mode }: Props) {
           )}
           <div className="rec-grid">
             {sorted.map((row, i) => (
-              <ChampCard key={row.championName} row={row} rank={i} />
+              <ChampCard
+                key={row.championName}
+                row={row}
+                rank={i}
+                detailOpen={detail === row.championName}
+                onDetail={() => setDetail((d) => (d === row.championName ? null : row.championName))}
+              />
             ))}
           </div>
+          {detail && <DetailGames champ={detail} data={detailGames} loading={detailLoading} />}
         </>
       )}
     </section>

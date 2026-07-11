@@ -198,6 +198,27 @@ export interface RecommendResponse {
   recommendations: RecommendRow[];
 }
 
+/** Partida individual detrás de un win rate de recommend ("+ Detalle"). */
+export interface RecommendGameRow {
+  matchId: string;
+  region: string;
+  patch: string | null;
+  tier: string | null;
+  gameDuration: number;
+  gameCreation: number;
+  /** true si el campeón consultado ganó esa partida. */
+  win: boolean;
+  /** Equipo del campeón consultado (100 azul / 200 rojo). */
+  teamId: number;
+  blueChamps: string[];
+  redChamps: string[];
+}
+
+export interface RecommendGamesResponse {
+  total: number;
+  games: RecommendGameRow[];
+}
+
 export interface MatchListRow {
   matchId: string;
   patch: string | null;

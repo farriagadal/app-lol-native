@@ -73,7 +73,8 @@ export function ChampionSelect({ options, value, onChange, placeholder = 'Todos'
     <div className="mcs-root champ-select" ref={root}>
       <div
         className={`mcs-field${open ? ' mcs-open' : ''}`}
-        onClick={() => { setOpen(true); input.current?.focus(); }}
+        // preventDefault: dentro de un <label> el clic se reenviaría a la × del chip
+        onClick={(e) => { e.preventDefault(); setOpen(true); input.current?.focus(); }}
       >
         {selected && !query && (
           <span className="mcs-chip champ-chip">

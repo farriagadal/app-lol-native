@@ -15,6 +15,7 @@ import { RiotClient } from '../collector/riotClient';
 import { lcuReplayDownload, lcuReplayWatch } from './replayLcu';
 import { collectPlayer, type PlayerCollectProgress } from './playerCollector';
 import { fetchProfileMatches } from './profileMatches';
+import { SettingsStore } from './settingsStore';
 import { MongoStore } from '../collector/mongoStore';
 import { KnowledgeStore } from './knowledgeStore';
 import type { CollectRequest } from './types';
@@ -28,6 +29,8 @@ const PORT = Number(process.env.PORT) || 4317;
 
 const db = new StatsDb(DATA_DIR);
 const runner = new CollectRunner(DATA_DIR);
+// Preferencias del panel (espejo del localStorage del navegador) en data/settings.db
+const settings = new SettingsStore(DATA_DIR);
 // Red de conocimiento manual (sinergias/counters), fuera de data/ para que
 // sobreviva a regeneraciones de la base y pueda versionarse en git.
 const knowledge = new KnowledgeStore(path.resolve(process.cwd(), 'knowledge'));
@@ -360,6 +363,25 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, await db.recommend(region, myChamps, enemies, allies, role, f));
       return;
     }
+    if (p === '/api/recommend-games' && req.method === 'GET') {
+      const region = url.searchParams.get('region');
+      const champion = url.searchParams.get('champion');
+      if (!region || !champion) return sendJson(res, 400, { error: 'faltan region y champion' });
+      const splitList = (key: string) =>
+        (url.searchParams.get(key) || '').split(',').map((s) => s.trim()).filter(Boolean);
+      const f = {
+        patch: url.searchParams.get('patch') || 'all',
+        tier: url.searchParams.get('tier') || 'all',
+        dateFrom: url.searchParams.get('dateFrom') || undefined,
+        dateTo: url.searchParams.get('dateTo') || undefined,
+      };
+      const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 20));
+      sendJson(res, 200, await db.recommendGames(
+        region, champion, splitList('enemies'), splitList('allies'),
+        url.searchParams.get('role') || 'ALL', f, limit,
+      ));
+      return;
+    }
     if (p === '/api/games' && req.method === 'GET') {
       const region = url.searchParams.get('region');
       if (!region) return sendJson(res, 400, { error: 'falta region' });
@@ -405,6 +427,21 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/collect-player/status' && req.method === 'GET') {
       return sendJson(res, 200, playerCollectProgress ?? { phase: 'idle' });
+    }
+    if (p === '/api/settings' && req.method === 'GET') {
+      return sendJson(res, 200, await settings.getAll());
+    }
+    if (p === '/api/settings' && req.method === 'PUT') {
+      const body = await readBody(req);
+      let entries: Record<string, string | null>;
+      try {
+        entries = JSON.parse(body);
+        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('shape');
+      } catch {
+        return sendJson(res, 400, { error: 'JSON inválido: se espera { clave: valor|null, ... }' });
+      }
+      await settings.set(entries);
+      return sendJson(res, 200, { ok: true });
     }
     if (p === '/api/profile-matches' && req.method === 'POST') {
       // Recolección efímera para la página Perfil: descarga y responde en la

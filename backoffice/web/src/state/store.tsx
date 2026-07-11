@@ -22,6 +22,7 @@ import {
   type StatFilter,
 } from '@ui';
 import { api, type RegionsResponse } from '../api';
+import { syncSetting } from '../settingsSync';
 import { checkAssets, loadDataDragon } from '../datadragon';
 
 export const LS = {
@@ -38,6 +39,7 @@ export const LS = {
     } catch {
       /* almacenamiento no disponible */
     }
+    syncSetting('bo:' + k, v);
   },
   remove: (k: string): void => {
     try {
@@ -45,6 +47,7 @@ export const LS = {
     } catch {
       /* almacenamiento no disponible */
     }
+    syncSetting('bo:' + k, null);
   },
 };
 
@@ -91,9 +94,6 @@ interface Store {
   // perfil efímero (nunca se mezcla con la base de análisis)
   profile: ProfileData | null;
   setProfile: (p: ProfileData | null) => void;
-  /** Toggle "Mis partidas" de las páginas de recomendación. */
-  myMatches: boolean;
-  setMyMatches: (v: boolean) => void;
 }
 
 const StoreContext = createContext<Store | null>(null);
@@ -122,12 +122,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setProfileRaw(p);
     if (p) LS.set('profile', JSON.stringify(p));
     else LS.remove('profile');
-  }, []);
-
-  const [myMatches, setMyMatchesRaw] = useState(() => LS.get('myMatches') === '1');
-  const setMyMatches = useCallback((v: boolean) => {
-    setMyMatchesRaw(v);
-    LS.set('myMatches', v ? '1' : '0');
   }, []);
 
   const [assetsLocal, setAssetsLocal] = useState(false);
@@ -259,8 +253,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reloadRegions,
     profile,
     setProfile,
-    myMatches,
-    setMyMatches,
   };
 
   return (

@@ -3,6 +3,8 @@
  * las páginas de recomendación (vs Rivales / Sinergias / Pick completo) y
  * persistidos en localStorage entre sesiones.
  */
+import { syncSetting } from '../settingsSync';
+
 export const POOLS_KEY = 'bff.recommend.pools';
 const LEGACY_POOL_KEY = 'bff.recommend.pool';
 
@@ -26,9 +28,11 @@ export function loadPools(): Record<string, string[]> {
 }
 
 export function savePools(pools: Record<string, string[]>): void {
+  const json = JSON.stringify(pools);
   try {
-    localStorage.setItem(POOLS_KEY, JSON.stringify(pools));
+    localStorage.setItem(POOLS_KEY, json);
   } catch {
     // almacenamiento no disponible
   }
+  syncSetting(POOLS_KEY, json);
 }

@@ -18,6 +18,103 @@
       "b": "Jhin",
       "weight": 3,
       "updatedAt": "2026-07-10T00:00:00Z"
+    },
+    {
+      "id": "5f4e9701-5259-488e-b05f-8b67281d1ded",
+      "kind": "counter",
+      "a": "Elise",
+      "b": "Rammus",
+      "weight": 3,
+      "updatedAt": "2026-07-11T06:03:36.548Z",
+      "role": "JUNGLE"
+    },
+    {
+      "id": "03e0a7f4-afe2-4ad4-a3f8-8e0d74da91a6",
+      "kind": "counter",
+      "a": "Xerath",
+      "b": "Elise",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:04:31.037Z"
+    },
+    {
+      "id": "5e1c74c5-90ea-49bd-940d-3ae52ca37d29",
+      "kind": "synergy",
+      "a": "Elise",
+      "b": "Yone",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:05:32.162Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "acd79a44-a78c-47b7-92ce-00814789d797",
+      "kind": "synergy",
+      "a": "Elise",
+      "b": "Viktor",
+      "weight": 3,
+      "updatedAt": "2026-07-11T06:06:19.350Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "16158389-75fc-4013-9c05-61d231f09966",
+      "kind": "counter",
+      "a": "Akali",
+      "b": "Ahri",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:07:22.943Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "a4b178b3-25b5-488d-905a-86cdfe2ef016",
+      "kind": "counter",
+      "a": "Ahri",
+      "b": "TwistedFate",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:07:54.380Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "a238e1d9-5a72-4535-9e6e-cfd552784df7",
+      "kind": "counter",
+      "a": "Ahri",
+      "b": "Xerath",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:08:01.715Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "00f848cb-6177-4af4-bd5c-ed8394326a91",
+      "kind": "counter",
+      "a": "Yasuo",
+      "b": "Ahri",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:08:12.317Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "3fbc76a1-e3c2-471a-94da-72e59b537218",
+      "kind": "synergy",
+      "a": "Ahri",
+      "b": "Caitlyn",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:08:39.752Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "f0b6c257-6006-49e1-8689-9fb5ec93d0a1",
+      "kind": "synergy",
+      "a": "Ahri",
+      "b": "Thresh",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:08:43.331Z",
+      "role": "MIDDLE"
+    },
+    {
+      "id": "ff8c5d8d-ead6-4aed-b98c-7281c653f5cc",
+      "kind": "counter",
+      "a": "Yone",
+      "b": "Yasuo",
+      "weight": 2,
+      "updatedAt": "2026-07-11T06:13:00.759Z"
     }
   ]
 }

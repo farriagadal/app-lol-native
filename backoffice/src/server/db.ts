@@ -1208,6 +1208,119 @@ export class StatsDb {
     return { recommendations };
   }
 
+  /**
+   * Partidas individuales detrás de un win rate de recommend ("+ Detalle"):
+   * misma semántica de filtros que recommend() pero para UN campeón, con el
+   * resumen de ambos equipos por partida.
+   */
+  async recommendGames(
+    region: string,
+    champion: string,
+    enemies: string[],
+    allies: string[],
+    role: string,
+    f: Pick<StatFilter, 'patch' | 'tier' | 'dateFrom' | 'dateTo'>,
+    limit: number,
+  ): Promise<import('./types').RecommendGamesResponse> {
+    const regionList = this.parseRegionList(region);
+    if (!regionList.length || !champion) return { total: 0, games: [] };
+
+    const patches = this.parsePatch(f.patch);
+    const patchW = this.patchClause(patches);
+    const tiers = this.parseTier(f.tier);
+    const tierW = this.tierClause(tiers);
+    const dateW = this.dateWhere;
+
+    const enemyBindings: Record<string, string> = {};
+    enemies.forEach((e, i) => { enemyBindings[`$e${i}`] = e; });
+    const allyBindings: Record<string, string> = {};
+    allies.forEach((a, i) => { allyBindings[`$a${i}`] = a; });
+
+    const roleWhere = role === 'ALL'
+      ? `p1.team_position <> ''`
+      : `p1.team_position = $role AND p1.team_position <> ''`;
+
+    const enemyFilter = enemies.length > 0
+      ? `AND EXISTS (
+           SELECT 1 FROM participants p2
+           WHERE p2.match_id = p1.match_id
+             AND p2.team_position = p1.team_position
+             AND p2.team_id <> p1.team_id
+             AND p2.champion_name IN (${enemies.map((_, i) => `$e${i}`).join(', ')})
+         )`
+      : '';
+
+    const allyFilter = allies.length > 0
+      ? `AND EXISTS (
+           SELECT 1 FROM participants p3
+           WHERE p3.match_id = p1.match_id
+             AND p3.team_id = p1.team_id
+             AND p3.participant_id <> p1.participant_id
+             AND p3.champion_name IN (${allies.map((_, i) => `$a${i}`).join(', ')})
+         )`
+      : '';
+
+    const baseWhere = `p1.champion_name = $champ
+        AND ${roleWhere}
+        AND m.game_duration >= 240
+        AND (${patchW})
+        AND (${tierW})
+        AND ${dateW}
+        ${enemyFilter}
+        ${allyFilter}`;
+
+    const countSql = `
+      SELECT COUNT(*) c
+      FROM participants p1 JOIN matches m ON m.match_id = p1.match_id
+      WHERE ${baseWhere}`;
+
+    const listSql = `
+      SELECT m.match_id, m.patch, m.tier, m.game_duration, m.game_creation, p1.win, p1.team_id,
+        GROUP_CONCAT(CASE WHEN p.team_id = 100 THEN p.champion_name END) blue_champs,
+        GROUP_CONCAT(CASE WHEN p.team_id = 200 THEN p.champion_name END) red_champs
+      FROM participants p1
+      JOIN matches m ON m.match_id = p1.match_id
+      JOIN participants p ON p.match_id = m.match_id
+      WHERE ${baseWhere}
+      GROUP BY m.match_id
+      ORDER BY m.game_creation DESC`;
+
+    const params: Record<string, string> = {
+      ...this.patchBindings(patches),
+      ...this.tierBindings(tiers),
+      ...enemyBindings,
+      ...allyBindings,
+      $champ: champion,
+      $dateFrom: f.dateFrom ?? '',
+      $dateTo: f.dateTo ?? '',
+    };
+    if (role !== 'ALL') params.$role = role;
+
+    const mapRow = (region: string) => (r: Record<string, number | string | null>): import('./types').RecommendGameRow => ({
+      matchId: String(r.match_id),
+      region,
+      patch: r.patch == null ? null : String(r.patch),
+      tier: r.tier == null ? null : String(r.tier),
+      gameDuration: Number(r.game_duration ?? 0),
+      gameCreation: Number(r.game_creation ?? 0),
+      win: Number(r.win) === 1,
+      teamId: Number(r.team_id ?? 0),
+      blueChamps: r.blue_champs ? String(r.blue_champs).split(',').filter(Boolean) : [],
+      redChamps: r.red_champs ? String(r.red_champs).split(',').filter(Boolean) : [],
+    });
+
+    let total = 0;
+    const games: import('./types').RecommendGameRow[] = [];
+    for (const r of regionList) {
+      const db = await this.open(r);
+      if (!db) continue;
+      total += Number(this.rows(db.exec(countSql, params))[0]?.c ?? 0);
+      games.push(...this.rows(db.exec(listSql + ` LIMIT ${limit}`, params)).map(mapRow(r)));
+    }
+    games.sort((a, b) => b.gameCreation - a.gameCreation);
+    return { total, games: games.slice(0, limit) };
+  }
+
   /** Lista paginada de partidas con resumen de equipos. */
   async matchList(
     region: string,
